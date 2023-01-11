@@ -30,7 +30,7 @@ import numpy as np
 from dpbench_datagen.dbscan import gen_data_to_file, gen_rand_data
 from dpbench_python.dbscan.dbscan_python import dbscan_python
 
-import utils
+import run_utils
 
 ######################################################
 # GLOBAL DECLARATIONS THAT WILL BE USED IN ALL FILES #
@@ -103,7 +103,7 @@ def run(name, sizes=5, step=2, nopt=2**10):
         )
 
     build_string = ["make"]
-    utils.run_command(build_string, verbose=True)
+    run_utils.run_command(build_string, verbose=True)
     exec_name = "./dbscan"
 
     if args.test:
@@ -128,7 +128,7 @@ def run(name, sizes=5, step=2, nopt=2**10):
             str(1),
             "-t",
         ]
-        utils.run_command(run_cmd, verbose=True)
+        run_utils.run_command(run_cmd, verbose=True)
 
         n_assignments = np.fromfile("assignments.bin", np.int64)
 
@@ -169,7 +169,7 @@ def run(name, sizes=5, step=2, nopt=2**10):
             str(eps),
             str(repeat),
         ]
-        utils.run_command(run_cmd, verbose=True)
+        run_utils.run_command(run_cmd, verbose=True)
 
         nopt *= args.step
         repeat = max(repeat - args.step, 1)

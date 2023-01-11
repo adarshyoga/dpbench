@@ -10,7 +10,7 @@ import numpy as np
 from dpbench_datagen.l2_distance import gen_data, gen_data_to_file
 from dpbench_python.l2_distance.l2_distance_python import l2_distance_python
 
-import utils
+import run_utils
 
 # import numpy.random_intel as rnd
 
@@ -68,27 +68,27 @@ def run(name, sizes=5, step=2, nopt=2**25):
     dims = int(args.d)
 
     clean_string = ["make", "clean"]
-    utils.run_command(clean_string, verbose=True)
+    run_utils.run_command(clean_string, verbose=True)
 
     is_usm = args.usm
     is_atomic = args.atomic
 
     if is_usm & is_atomic:
         build_string = ["make", "atomic_comp"]
-        utils.run_command(build_string, verbose=True)
+        run_utils.run_command(build_string, verbose=True)
         exec_name = "./l2_distance_atomic_comp"
     else:
         if is_usm:
             build_string = ["make", "comp"]
-            utils.run_command(build_string, verbose=True)
+            run_utils.run_command(build_string, verbose=True)
             exec_name = "./l2_distance_comp"
         elif is_atomic:
             build_string = ["make", "atomic"]
-            utils.run_command(build_string, verbose=True)
+            run_utils.run_command(build_string, verbose=True)
             exec_name = "./l2_distance_atomic"
         else:
             build_string = ["make"]
-            utils.run_command(build_string, verbose=True)
+            run_utils.run_command(build_string, verbose=True)
             exec_name = "./l2_distance"
 
     if args.test:
@@ -100,7 +100,7 @@ def run(name, sizes=5, step=2, nopt=2**25):
         # run the C program
 
         run_cmd = [exec_name, str(nopt), str(1), "-t"]
-        utils.run_command(run_cmd, verbose=True)
+        run_utils.run_command(run_cmd, verbose=True)
 
         # TODO: controll dtype
         # read output of dpcpp
@@ -135,7 +135,7 @@ def run(name, sizes=5, step=2, nopt=2**25):
 
         # run the C program
         run_cmd = [exec_name, str(nopt), str(repeat)]
-        utils.run_command(run_cmd, verbose=True)
+        run_utils.run_command(run_cmd, verbose=True)
         nopt *= step
         repeat -= step
         if repeat < 1:

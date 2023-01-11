@@ -17,7 +17,7 @@ from dpbench_datagen.knn import (
 )
 from dpbench_python.knn.knn_python import knn_python
 
-import utils
+import run_utils
 
 # make xrange available in python 3
 try:
@@ -68,15 +68,15 @@ def run(name, sizes=5, step=2, nopt=2**20):
     repeat = args.repeat
 
     clean_string = ["make", "clean"]
-    utils.run_command(clean_string, verbose=True)
+    run_utils.run_command(clean_string, verbose=True)
 
     if args.usm:
         build_string = ["make", "comp"]
-        utils.run_command(build_string, verbose=True)
+        run_utils.run_command(build_string, verbose=True)
         exec_name = "./knn_comp"
     else:
         build_string = ["make"]
-        utils.run_command(build_string, verbose=True)
+        run_utils.run_command(build_string, verbose=True)
         exec_name = "./knn"
 
     if args.test:
@@ -104,7 +104,7 @@ def run(name, sizes=5, step=2, nopt=2**20):
         gen_data_to_file(nopt)
         # run the C program
         run_cmd = [exec_name, str(nopt), str(1), "-t"]
-        utils.run_command(run_cmd, verbose=True)
+        run_utils.run_command(run_cmd, verbose=True)
 
         # read output of dpcpp
         n_predictions = np.fromfile("predictions.bin", np.int64)
@@ -136,7 +136,7 @@ def run(name, sizes=5, step=2, nopt=2**20):
 
         # run the C program
         run_cmd = [exec_name, str(nopt), str(repeat)]
-        utils.run_command(run_cmd, verbose=True)
+        run_utils.run_command(run_cmd, verbose=True)
         nopt *= step
         repeat -= step
         if repeat < 1:

@@ -13,7 +13,7 @@ from dpbench_python.pairwise_distance.pairwise_distance_python import (
     pairwise_distance_python,
 )
 
-import utils
+import run_utils
 
 ######################################################
 # GLOBAL DECLARATIONS THAT WILL BE USED IN ALL FILES #
@@ -75,15 +75,15 @@ def run(name, sizes=6, step=2, nopt=2**10):
     dims = int(args.d)
 
     clean_string = ["make", "clean"]
-    utils.run_command(clean_string, verbose=True)
+    run_utils.run_command(clean_string, verbose=True)
 
     if args.usm:
         build_string = ["make", "comp"]
-        utils.run_command(build_string, verbose=True)
+        run_utils.run_command(build_string, verbose=True)
         exec_name = "./pairwise_distance_comp"
     else:
         build_string = ["make"]
-        utils.run_command(build_string, verbose=True)
+        run_utils.run_command(build_string, verbose=True)
         exec_name = "./pairwise_distance"
 
     if args.test:
@@ -94,7 +94,7 @@ def run(name, sizes=6, step=2, nopt=2**10):
         gen_data_to_file(nopt, dims)
         # run the C program
         run_cmd = [exec_name, str(nopt), str(1), "-t"]
-        utils.run_command(run_cmd, verbose=True)
+        run_utils.run_command(run_cmd, verbose=True)
 
         # read output of dpcpp
         n_D = np.fromfile("D.bin").reshape(nopt, nopt)
@@ -113,7 +113,7 @@ def run(name, sizes=6, step=2, nopt=2**10):
 
         # run the C program
         run_cmd = [exec_name, str(nopt), str(repeat)]
-        utils.run_command(run_cmd, verbose=True)
+        run_utils.run_command(run_cmd, verbose=True)
         nopt *= step
         repeat -= step
         if repeat < 1:

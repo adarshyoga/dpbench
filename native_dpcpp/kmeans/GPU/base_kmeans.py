@@ -9,7 +9,7 @@ import numpy as np
 from dpbench_datagen.kmeans import gen_data_to_file, gen_rand_data
 from dpbench_python.kmeans.kmeans_python import kmeans_python
 
-import utils
+import run_utils
 
 # make xrange available in python 3
 try:
@@ -56,15 +56,15 @@ def run(name, sizes=5, step=2, nopt=2**17):
     sizes = args.steps
 
     clean_string = ["make", "clean"]
-    utils.run_command(clean_string, verbose=True)
+    run_utils.run_command(clean_string, verbose=True)
 
     if args.usm:
         build_string = ["make", "comp"]
-        utils.run_command(build_string, verbose=True)
+        run_utils.run_command(build_string, verbose=True)
         exec_name = "./kmeans_comp"
     else:
         build_string = ["make"]
-        utils.run_command(build_string, verbose=True)
+        run_utils.run_command(build_string, verbose=True)
         exec_name = "./kmeans"
 
     if args.test:
@@ -89,7 +89,7 @@ def run(name, sizes=5, step=2, nopt=2**17):
         gen_data_to_file(nopt, dtype=np.float32)
         # run the C program
         run_cmd = [exec_name, str(nopt), str(1), "-t"]
-        utils.run_command(run_cmd, verbose=True)
+        run_utils.run_command(run_cmd, verbose=True)
 
         # read output of dpcpp
         arrayC_n = np.fromfile("arrayC.bin", np.float32).reshape(
@@ -133,7 +133,7 @@ def run(name, sizes=5, step=2, nopt=2**17):
 
         # run the C program
         run_cmd = [exec_name, str(nopt), str(repeat)]
-        utils.run_command(run_cmd, verbose=True)
+        run_utils.run_command(run_cmd, verbose=True)
         nopt *= step
         repeat -= step
         if repeat < 1:

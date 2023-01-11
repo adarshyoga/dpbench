@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 from sklearn.datasets import make_classification, make_regression
 
-import utils
+import run_utils
 
 ######################################################
 # GLOBAL DECLARATIONS THAT WILL BE USED IN ALL FILES #
@@ -89,10 +89,10 @@ def run(name, sizes=10, step=2, nopt=2**10):
         os.remove("perf_output.csv")
 
     clean_string = ["make", "clean"]
-    utils.run_command(clean_string, verbose=True)
+    run_utils.run_command(clean_string, verbose=True)
 
     build_string = ["make"]
-    utils.run_command(build_string, verbose=True)
+    run_utils.run_command(build_string, verbose=True)
 
     nopt = int(args.size)
     for i in xrange(args.steps):
@@ -105,7 +105,7 @@ def run(name, sizes=10, step=2, nopt=2**10):
 
         # run the C program
         run_cmd = ["./pca", str(nopt), str(args.dims), str(repeat)]
-        utils.run_command(run_cmd, verbose=True)
+        run_utils.run_command(run_cmd, verbose=True)
 
         nopt *= args.step
         repeat -= args.step

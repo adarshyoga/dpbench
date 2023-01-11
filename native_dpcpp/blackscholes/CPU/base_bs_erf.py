@@ -8,7 +8,7 @@ import numpy as np
 from dpbench_datagen.blackscholes import gen_data_to_file, gen_rand_data
 from dpbench_python.blackscholes.bs_python import black_scholes_python
 
-import utils
+import run_utils
 
 # make xrange available in python 3
 try:
@@ -75,15 +75,15 @@ def run(name, sizes=14, step=2, nopt=2**15):
     repeat = int(args.repeat)
 
     clean_string = ["make", "clean"]
-    utils.run_command(clean_string, verbose=True)
+    run_utils.run_command(clean_string, verbose=True)
 
     if args.usm:
         build_string = ["make", "comp"]
-        utils.run_command(build_string, verbose=True)
+        run_utils.run_command(build_string, verbose=True)
         exec_name = "./black_scholes_comp"
     else:
         build_string = ["make"]
-        utils.run_command(build_string, verbose=True)
+        run_utils.run_command(build_string, verbose=True)
         exec_name = "./black_scholes"
 
     if args.test:
@@ -96,7 +96,7 @@ def run(name, sizes=14, step=2, nopt=2**15):
         # run dpcpp
         ip_data_to_file(nopt)
         run_cmd = [exec_name, str(nopt), str(1), "-t"]
-        utils.run_command(run_cmd, verbose=True)
+        run_utils.run_command(run_cmd, verbose=True)
 
         # read output of dpcpp into n_call, n_put
         n_call = np.fromfile("call.bin", np.float64)
@@ -120,7 +120,7 @@ def run(name, sizes=14, step=2, nopt=2**15):
 
         # run the C program
         run_cmd = [exec_name, str(nopt), str(repeat)]
-        utils.run_command(run_cmd, verbose=True)
+        run_utils.run_command(run_cmd, verbose=True)
         nopt *= step
         repeat -= step
         if repeat < 1:
