@@ -20,7 +20,7 @@ except NameError:
 NUMBER_OF_CENTROIDS = 10
 
 # create input data, call blackscholes computation function (alg)
-def run(name, sizes=5, step=2, nopt=2**17):
+def run(name, sizes=6, step=2, nopt=2**17):
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--steps", type=int, default=sizes, help="Number of steps"

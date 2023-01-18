@@ -82,7 +82,7 @@ auto read_data_x(size_t data_size, std::string filename)
 {
 
     auto n = data_size * DATADIM;
-    auto data = std::make_unique<double_t[]>(n);
+    auto data = std::make_unique<double[]>(n);
 
     std::ifstream file;
     file.open(filename, std::ios::in | std::ios::binary);

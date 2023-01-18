@@ -120,7 +120,7 @@ def gen_data_usm(nopt):
 ##############################################
 
 
-def run(name, alg, sizes=5, step=2, nopt=2**18):
+def run(name, alg, sizes=6, step=2, nopt=2**17):
     import argparse
 
     parser = argparse.ArgumentParser()

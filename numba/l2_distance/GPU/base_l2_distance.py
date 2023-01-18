@@ -157,6 +157,7 @@ def run(name, alg, sizes=5, step=2, nopt=2**25):
             print(
                 "Test failed. Python dis: ", p_dis, " Numba dis: ", n_dis, "\n"
             )
+        return
 
     for _ in xrange(sizes):
         if args.usm is True:
