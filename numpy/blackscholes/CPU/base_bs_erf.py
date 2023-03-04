@@ -3,11 +3,9 @@
 # SPDX-License-Identifier: MIT
 
 import sys
-import dpnp as np
-import numpy
+import numpy as np
 from dpbench_python.blackscholes.bs_python import black_scholes_python
 from dpbench_datagen.blackscholes import gen_rand_data
-import dpctl
 
 try:
     import itimer as it
@@ -32,13 +30,13 @@ except NameError:
 
 RISK_FREE = 0.1
 VOLATILITY = 0.2
-    
+
 ###############################################
 
 def gen_data_np(nopt):
     price, strike, t = gen_rand_data(nopt)
-    call = numpy.zeros(nopt, dtype=np.float64)
-    put = numpy.ones(nopt, dtype=np.float64)
+    call = np.zeros(nopt, dtype=np.float64)
+    put = np.ones(nopt, dtype=np.float64)
     return (
         price,
         strike,
@@ -47,33 +45,6 @@ def gen_data_np(nopt):
         put,
     )
 
-def to_dpnp(ref_array):
-    if ref_array.flags["C_CONTIGUOUS"]:
-        order = "C"
-    elif ref_array.flags["F_CONTIGUOUS"]:
-        order = "F"
-    else:
-        order = "K"
-    return np.asarray(
-        ref_array,
-        dtype=ref_array.dtype,
-        order=order,
-        like=None,
-        device="cpu",
-        usm_type=None,
-        sycl_queue=None,
-    )
-
-def to_numpy(ref_array):
-    return np.asnumpy(ref_array)
-
-
-def gen_data_dpnp(nopt):
-     price, strike, t, call, put = gen_data_np(nopt)
-
-     #convert to dpnp
-     return (to_dpnp(price), to_dpnp(strike), to_dpnp(t), to_dpnp(call), to_dpnp(put))
-     
 ##############################################
 
 # create input data, call blackscholes computation function (alg)
@@ -112,19 +83,17 @@ def run(name, alg, sizes=14, step=2, nopt=2**19):
     nopt = int(args.size)
     repeat = int(args.repeat)
 
-    dpctl.SyclDevice("cpu")
-
     if args.test:
         price, strike, t, p_call, p_put = gen_data_np(nopt)
         black_scholes_python(
             nopt, price, strike, t, RISK_FREE, VOLATILITY, p_call, p_put
         )
 
-        n_price, n_strike, n_t, n_call, n_put = gen_data_dpnp(nopt)
+        price_1, strike_1, t_1, n_call, n_put = gen_data_np(nopt)
         # pass numpy generated data to kernel
-        alg(nopt, n_price, n_strike, n_t, RISK_FREE, VOLATILITY, n_call, n_put)
+        alg(nopt, price, strike, t, RISK_FREE, VOLATILITY, n_call, n_put)
 
-        if numpy.allclose(to_numpy(n_call), p_call) and numpy.allclose(to_numpy(n_put), p_put):
+        if np.allclose(n_call, p_call) and np.allclose(n_put, p_put):
             print("Test succeeded\n")
         else:
             print("Test failed\n")
@@ -135,7 +104,7 @@ def run(name, alg, sizes=14, step=2, nopt=2**19):
 
     for i in xrange(sizes):
         # generate input data
-        price, strike, t, call, put = gen_data_dpnp(nopt)
+        price, strike, t, call, put = gen_data_np(nopt)
 
         iterations = xrange(repeat)
         print("ERF: {}: Size: {}".format(name, nopt), end=" ", flush=True)
