@@ -36,7 +36,7 @@ def gen_data_np(nevts, nout):
 ##############################################
 
 # create input data, call rambo computation function (alg)
-def run(name, alg, sizes=5, step=2, nevts=2**10):
+def run(name, alg, sizes=5, step=2, nevts=2**20):
     import argparse
 
     parser = argparse.ArgumentParser()

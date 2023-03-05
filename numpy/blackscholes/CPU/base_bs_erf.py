@@ -48,7 +48,7 @@ def gen_data_np(nopt):
 ##############################################
 
 # create input data, call blackscholes computation function (alg)
-def run(name, alg, sizes=14, step=2, nopt=2**19):
+def run(name, alg, sizes=10, step=2, nopt=2**19):
     import argparse
 
     parser = argparse.ArgumentParser()

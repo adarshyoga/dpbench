@@ -68,7 +68,7 @@ def gen_data_dpnp(nopt, dims):
 ##############################################
 
 # create input data, call l2_distance computation function (alg)
-def run(name, alg, sizes=10, step=2, nopt=2**10):
+def run(name, alg, sizes=10, step=2, nopt=2**20):
     import argparse
 
     parser = argparse.ArgumentParser()

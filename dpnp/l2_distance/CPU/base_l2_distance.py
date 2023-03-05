@@ -135,7 +135,7 @@ def run(name, alg, sizes=10, step=2, nopt=2**10):
         sys.stdout.flush()
 
         # call algorithm
-        alg(X, Y)  # warmup
+        #alg(X, Y)  # warmup
 
         t0 = now()
         for _ in iterations:
