@@ -27,5 +27,7 @@
 import numpy as np
 
 
-def l2_distance_python(a, b):
-    return np.linalg.norm(a - b)
+def l2_distance_python(a, d):
+    sq = np.square(a)
+    sum = sq.sum(axis=1)
+    d[:] = np.sqrt(sum)
