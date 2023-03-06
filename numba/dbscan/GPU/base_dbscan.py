@@ -25,17 +25,11 @@
 # *****************************************************************************
 
 import argparse
-import datetime
-import json
-import os
-import sys
 
 import dpctl
-import dpctl.tensor as dpt
-import numpy as np
-from device_selector import get_device_selector
+import numpy
+import dpnp as np
 from dpbench_datagen.dbscan import gen_rand_data
-from dpbench_datagen.dbscan.generate_data_random import SEED
 from dpbench_python.dbscan.dbscan_python import dbscan_python
 
 try:
@@ -62,43 +56,38 @@ except NameError:
 
 ###############################################
 
-
-def gen_data_usm(nopt, dims, a_minpts, a_eps):
-    data, p_eps, p_minpts = gen_rand_data(nopt, dims)
-    assignments = np.empty(nopt, dtype=np.int64)
-
-    with dpctl.device_context(get_device_selector(is_gpu=True)) as gpu_queue:
-        data_usm = dpt.usm_ndarray(
-            data.shape,
-            dtype=data.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-        assignments_usm = dpt.usm_ndarray(
-            assignments.shape,
-            dtype=assignments.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-
-    data_usm.usm_data.copy_from_host(data.view("u1"))
-    assignments_usm.usm_data.copy_from_host(assignments.view("u1"))
-
-    minpts = p_minpts or a_minpts
-    eps = p_eps or a_eps
-
-    return (data_usm, assignments_usm, eps, minpts)
-
-
 def gen_data_np(nopt, dims, a_minpts, a_eps):
     data, p_eps, p_minpts = gen_rand_data(nopt, dims)
-    assignments = np.empty(nopt, dtype=np.int64)
+    assignments = numpy.empty(nopt, dtype=np.int64)
 
     minpts = p_minpts or a_minpts
     eps = p_eps or a_eps
 
     return (data, assignments, eps, minpts)
 
+def to_dpnp(ref_array):
+    if ref_array.flags["C_CONTIGUOUS"]:
+        order = "C"
+    elif ref_array.flags["F_CONTIGUOUS"]:
+        order = "F"
+    else:
+        order = "K"
+    return np.asarray(
+        ref_array,
+        dtype=ref_array.dtype,
+        order=order,
+        like=None,
+        device="gpu",
+        usm_type=None,
+        sycl_queue=None,
+    )
+
+def to_numpy(ref_array):
+    return np.asnumpy(ref_array)
+
+def gen_data_dpnp(nopt, dims, a_minpts, a_eps):
+    (data, assignments, eps, minpts) = gen_data_np(nopt, dims, a_minpts, a_eps)
+    return (to_dpnp(data), to_dpnp(assignments), eps, minpts)
 
 ##############################################
 
@@ -126,44 +115,18 @@ def run(name, alg, sizes=5, step=2, nopt=2**10):
     )
     parser.add_argument("--minpts", type=int, default=20, help="minPts")
     parser.add_argument(
-        "--json",
-        required=False,
-        default=__file__.replace("py", "json"),
-        help="output json data filename",
-    )
-    parser.add_argument(
         "--test",
         required=False,
         action="store_true",
         help="Check for correctness by comparing output with naieve Python version",
-    )
-    parser.add_argument(
-        "--usm",
-        required=False,
-        action="store_true",
-        help="Use USM Shared or pure numpy",
     )
 
     args = parser.parse_args()
     nopt = args.size
     repeat = args.repeat
 
-    output = {}
-    output["name"] = name
-    output["datetime"] = datetime.datetime.strftime(
-        datetime.datetime.now(), "%Y-%m-%d %H:%M:%S"
-    )
-    output["sizes"] = sizes
-    output["step"] = step
-    output["repeat"] = repeat
-    output["randseed"] = SEED
-    output["metrics"] = []
-
-    if args.usm:
-        print(
-            "Warn: Use of USM data not supported since DBSCAN has both host and device executions. Using numpy input data instead of USM\n"
-        )
-
+    dpctl.SyclDevice("gpu")
+    
     if args.test:
         data, p_assignments, eps, minpts = gen_data_np(
             nopt, args.dims, args.minpts, args.eps
@@ -172,14 +135,10 @@ def run(name, alg, sizes=5, step=2, nopt=2**10):
             nopt, args.dims, data, eps, minpts, p_assignments
         )
 
-        # if args.usm is True:
-        #     data, assignments, eps, minpts = gen_data_usm(nopt, args.dims, args.minpts, args.eps)
-        #     n_nclusters = alg(nopt, args.dims, data, eps, minpts, assignments)
-        # else:
-        data, n_assignments, eps, minpts = gen_data_np(
+        n_data, n_assignments, eps, minpts = gen_data_dpnp(
             nopt, args.dims, args.minpts, args.eps
         )
-        n_nclusters = alg(nopt, args.dims, data, eps, minpts, n_assignments)
+        n_nclusters = alg(nopt, args.dims, n_data, eps, minpts, n_assignments)
 
         if np.allclose(n_nclusters, p_nclusters) and np.allclose(
             n_assignments, p_assignments
@@ -217,7 +176,7 @@ def run(name, alg, sizes=5, step=2, nopt=2**10):
         "runtimes.csv", "w", 1
     ) as runtimes_fd:
         for _ in xrange(args.steps):
-            data, assignments, eps, minpts = gen_data_np(
+            data, assignments, eps, minpts = gen_data_dpnp(
                 nopt, args.dims, args.minpts, args.eps
             )
             nclusters = alg(
@@ -236,8 +195,6 @@ def run(name, alg, sizes=5, step=2, nopt=2**10):
                 ),
                 flush=True,
             )
-            output["metrics"].append((nopt, mops, time))
-
             mops_fd.write(
                 "{},{},{},{},{},{}\n".format(
                     nopt, args.dims, eps, minpts, nclusters, result_mops
@@ -251,4 +208,3 @@ def run(name, alg, sizes=5, step=2, nopt=2**10):
 
             nopt *= args.step
             repeat = max(repeat - args.step, 1)
-    json.dump(output, open(args.json, "w"), indent=2, sort_keys=True)

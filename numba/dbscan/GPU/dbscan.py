@@ -25,24 +25,58 @@
 # *****************************************************************************
 
 import base_dbscan
-import dpctl
-import numpy as np
-from device_selector import get_device_selector
-
+import dpnp as np
 import numba as nb
-import utils
-from numba import jit, prange
+import numpy
+from numba_dpex import dpjit
 
 NOISE = -1
 UNDEFINED = -2
 DEFAULT_QUEUE_CAPACITY = 10
 
 
-@nb.jit(nopython=True, parallel=True, fastmath=True)
+@nb.njit()
+def _queue_create(capacity):
+    return (numpy.empty(capacity, dtype=numpy.int64), 0, 0)
+
+
+@nb.njit()
+def _queue_resize(qu, tail, new_capacity):
+    tail = min(tail, new_capacity)
+
+    new_qu = numpy.empty(new_capacity, dtype=numpy.int64)
+    new_qu[:tail] = qu[:tail]
+    return new_qu, tail
+
+
+@nb.njit()
+def _queue_push(qu, value, tail, capacity):
+    if tail == capacity:
+        capacity = 2 * capacity
+        qu, tail = _queue_resize(qu, tail, capacity)
+
+    qu[tail] = value
+    tail += 1
+
+    return qu, tail, capacity
+
+
+@nb.njit()
+def _queue_pop(qu, head, tail):
+    head += 1
+    return qu[head - 1], head
+
+
+@nb.njit()
+def _queue_empty(head, tail):
+    return head == tail
+
+
+@dpjit
 def get_neighborhood(n, dim, data, eps, ind_lst, sz_lst, assignments):
     block_size = 1
     nblocks = n // block_size + int(n % block_size > 0)
-    for i in prange(nblocks):
+    for i in nb.prange(nblocks):
         start = i * block_size
         stop = n if i + 1 == nblocks else start + block_size
         for j in range(start, stop):
@@ -63,11 +97,10 @@ def get_neighborhood(n, dim, data, eps, ind_lst, sz_lst, assignments):
                     if dist <= eps2:
                         size = sz_lst[j]
                         ind_lst[j * n + size] = k
-                        # dist_lst[j * n + size] = dist
                         sz_lst[j] = size + 1
 
 
-@nb.jit(nopython=True)
+@nb.njit(parallel=False, fastmath=True)
 def compute_clusters(n, min_pts, assignments, sizes, indices_list):
     nclusters = 0
     nnoise = 0
@@ -82,7 +115,8 @@ def compute_clusters(n, min_pts, assignments, sizes, indices_list):
         nclusters += 1
         assignments[i] = nclusters - 1
 
-        qu = utils.Queue(DEFAULT_QUEUE_CAPACITY)
+        qu_capacity = DEFAULT_QUEUE_CAPACITY
+        qu, head, tail = _queue_create(qu_capacity)
         for j in range(size):
             next_point = indices_list[i * n + j]
             if assignments[next_point] == NOISE:
@@ -90,10 +124,12 @@ def compute_clusters(n, min_pts, assignments, sizes, indices_list):
                 assignments[next_point] = nclusters - 1
             elif assignments[next_point] == UNDEFINED:
                 assignments[next_point] = nclusters - 1
-                qu.push(next_point)
+                qu, tail, qu_capacity = _queue_push(
+                    qu, next_point, tail, qu_capacity
+                )
 
-        while not qu.empty():
-            cur_point = qu.pop()
+        while not _queue_empty(head, tail):
+            cur_point, head = _queue_pop(qu, head, tail)
             size = sizes[cur_point]
             assignments[cur_point] = nclusters - 1
             if size < min_pts:
@@ -106,20 +142,27 @@ def compute_clusters(n, min_pts, assignments, sizes, indices_list):
                     assignments[next_point] = nclusters - 1
                 elif assignments[next_point] == UNDEFINED:
                     assignments[next_point] = nclusters - 1
-                    qu.push(next_point)
+                    qu, tail, qu_capacity = _queue_push(
+                        qu, next_point, tail, qu_capacity
+                    )
 
     return nclusters
 
 
-def dbscan(n, dim, data, eps, min_pts, assignments):
-    indices_list = np.empty(n * n, dtype=np.int64)
-    # distances_list = np.empty(n*n)
-    sizes = np.zeros(n, dtype=np.int64)
+def dbscan(n_samples, n_features, data, eps, min_pts, assignments):
+    indices_list = np.empty(n_samples * n_samples, dtype=np.int64)
+    sizes = np.zeros(n_samples, dtype=np.int64)
 
-    with dpctl.device_context(get_device_selector(is_gpu=True)):
-        get_neighborhood(n, dim, data, eps, indices_list, sizes, assignments)
+    get_neighborhood(
+        n_samples, n_features, data, eps, indices_list, sizes, assignments
+    )
 
-    return compute_clusters(n, min_pts, assignments, sizes, indices_list)
-
+    return compute_clusters(
+        n_samples,
+        min_pts,
+        np.asnumpy(assignments),
+        np.asnumpy(sizes),
+        np.asnumpy(indices_list),
+    )
 
 base_dbscan.run("dbscan", dbscan)
