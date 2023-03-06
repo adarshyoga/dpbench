@@ -2,9 +2,7 @@
 #
 # SPDX-License-Identifier: MIT
 
-import dpctl
-import numpy
-import dpnp as np
+import numpy as np
 from dpbench_datagen.gpairs import DEFAULT_NBINS, gen_rand_data
 from dpbench_python.gpairs.gpairs_python import gpairs_python
 
@@ -35,38 +33,10 @@ def gen_data_np(npoints, dtype=np.float32):
     x1, y1, z1, w1, x2, y2, z2, w2, DEFAULT_RBINS_SQUARED = gen_rand_data(
         npoints, dtype
     )
-    result = numpy.zeros_like(DEFAULT_RBINS_SQUARED).astype(dtype)
+    result = np.zeros_like(DEFAULT_RBINS_SQUARED).astype(dtype)
     return (x1, y1, z1, w1, x2, y2, z2, w2, DEFAULT_RBINS_SQUARED, result)
 
-def to_dpnp(ref_array):
-    if ref_array.flags["C_CONTIGUOUS"]:
-        order = "C"
-    elif ref_array.flags["F_CONTIGUOUS"]:
-        order = "F"
-    else:
-        order = "K"
-    return np.asarray(
-        ref_array,
-        dtype=ref_array.dtype,
-        order=order,
-        like=None,
-        device="cpu",
-        usm_type=None,
-        sycl_queue=None,
-    )
-
-def to_numpy(ref_array):
-    return np.asnumpy(ref_array)
-
-
-def gen_data_dpnp(npoints, dtype=np.float32):
-    (x1, y1, z1, w1, x2, y2, z2, w2, DEFAULT_RBINS_SQUARED, result) = gen_data_np(npoints, dtype)
-    
-    #convert to dpnp
-    return (to_dpnp(x1), to_dpnp(y1), to_dpnp(z1), to_dpnp(w1), to_dpnp(x2), to_dpnp(y2), to_dpnp(z2), to_dpnp(w2), to_dpnp(DEFAULT_RBINS_SQUARED), to_dpnp(result))
-
 ##############################################
-
 
 def run(name, alg, sizes=5, step=2, nopt=2**16):
     import argparse
@@ -131,7 +101,7 @@ def run(name, alg, sizes=5, step=2, nopt=2**16):
             w2_n,
             DEFAULT_RBINS_SQUARED_n,
             result_n,
-        ) = gen_data_dpnp(nopt)
+        ) = gen_data_np(nopt)
 
         # pass numpy generated data to kernel
         alg(
@@ -176,7 +146,7 @@ def run(name, alg, sizes=5, step=2, nopt=2**16):
             w2,
             DEFAULT_RBINS_SQUARED,
             result,
-        ) = gen_data_dpnp(nopt)
+        ) = gen_data_np(nopt)
         iterations = xrange(repeat)
 
         alg(

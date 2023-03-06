@@ -2,12 +2,9 @@
 #
 # SPDX-License-Identifier: MIT
 
-import json
-import os
-
 import dpctl
-import dpctl.tensor as dpt
-import numpy as np
+import numpy
+import dpnp as np
 from dpbench_datagen.gpairs import DEFAULT_NBINS, gen_rand_data
 from dpbench_python.gpairs.gpairs_python import gpairs_python
 
@@ -34,127 +31,39 @@ except NameError:
     xrange = range
 
 ###############################################
-def get_device_selector(is_gpu=True):
-    if is_gpu is True:
-        device_selector = "gpu"
-    else:
-        device_selector = "cpu"
-
-    if (
-        os.environ.get("SYCL_DEVICE_FILTER") is None
-        or os.environ.get("SYCL_DEVICE_FILTER") == "opencl"
-    ):
-        return "opencl:" + device_selector
-
-    if os.environ.get("SYCL_DEVICE_FILTER") == "level_zero":
-        return "level_zero:" + device_selector
-
-    return os.environ.get("SYCL_DEVICE_FILTER")
-
-
 def gen_data_np(npoints, dtype=np.float32):
     x1, y1, z1, w1, x2, y2, z2, w2, DEFAULT_RBINS_SQUARED = gen_rand_data(
         npoints, dtype
     )
-    result = np.zeros((npoints, DEFAULT_RBINS_SQUARED.shape[0]), dtype=dtype)
+    result = numpy.zeros_like(DEFAULT_RBINS_SQUARED).astype(dtype)
     return (x1, y1, z1, w1, x2, y2, z2, w2, DEFAULT_RBINS_SQUARED, result)
 
-
-def gen_data_usm(npoints):
-    # init numpy obj
-    x1, y1, z1, w1, x2, y2, z2, w2, DEFAULT_RBINS_SQUARED, result = gen_data_np(
-        npoints
+def to_dpnp(ref_array):
+    if ref_array.flags["C_CONTIGUOUS"]:
+        order = "C"
+    elif ref_array.flags["F_CONTIGUOUS"]:
+        order = "F"
+    else:
+        order = "K"
+    return np.asarray(
+        ref_array,
+        dtype=ref_array.dtype,
+        order=order,
+        like=None,
+        device="gpu",
+        usm_type=None,
+        sycl_queue=None,
     )
 
-    with dpctl.device_context(get_device_selector()) as gpu_queue:
-        # init usmdevice memory
-        x1_usm = dpt.usm_ndarray(
-            x1.shape,
-            dtype=x1.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-        y1_usm = dpt.usm_ndarray(
-            y1.shape,
-            dtype=y1.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-        z1_usm = dpt.usm_ndarray(
-            z1.shape,
-            dtype=z1.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-        w1_usm = dpt.usm_ndarray(
-            w1.shape,
-            dtype=w1.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-        x2_usm = dpt.usm_ndarray(
-            x2.shape,
-            dtype=x2.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-        y2_usm = dpt.usm_ndarray(
-            y2.shape,
-            dtype=y2.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-        z2_usm = dpt.usm_ndarray(
-            z2.shape,
-            dtype=z2.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-        w2_usm = dpt.usm_ndarray(
-            w2.shape,
-            dtype=w2.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-        DEFAULT_RBINS_SQUARED_usm = dpt.usm_ndarray(
-            DEFAULT_RBINS_SQUARED.shape,
-            dtype=DEFAULT_RBINS_SQUARED.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-        result_usm = dpt.usm_ndarray(
-            result.shape,
-            dtype=result.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
+def to_numpy(ref_array):
+    return np.asnumpy(ref_array)
 
-    x1_usm.usm_data.copy_from_host(x1.view("u1"))
-    y1_usm.usm_data.copy_from_host(y1.view("u1"))
-    z1_usm.usm_data.copy_from_host(z1.view("u1"))
-    w1_usm.usm_data.copy_from_host(w1.view("u1"))
-    x2_usm.usm_data.copy_from_host(x2.view("u1"))
-    y2_usm.usm_data.copy_from_host(y2.view("u1"))
-    z2_usm.usm_data.copy_from_host(z2.view("u1"))
-    w2_usm.usm_data.copy_from_host(w2.view("u1"))
-    DEFAULT_RBINS_SQUARED_usm.usm_data.copy_from_host(
-        DEFAULT_RBINS_SQUARED.view("u1")
-    )
-    result_usm.usm_data.copy_from_host(result.reshape((-1)).view("u1"))
 
-    return (
-        x1_usm,
-        y1_usm,
-        z1_usm,
-        w1_usm,
-        x2_usm,
-        y2_usm,
-        z2_usm,
-        w2_usm,
-        DEFAULT_RBINS_SQUARED_usm,
-        result_usm,
-    )
-
+def gen_data_dpnp(npoints, dtype=np.float32):
+    (x1, y1, z1, w1, x2, y2, z2, w2, DEFAULT_RBINS_SQUARED, result) = gen_data_np(npoints, dtype)
+    
+    #convert to dpnp
+    return (to_dpnp(x1), to_dpnp(y1), to_dpnp(z1), to_dpnp(w1), to_dpnp(x2), to_dpnp(y2), to_dpnp(z2), to_dpnp(w2), to_dpnp(DEFAULT_RBINS_SQUARED), to_dpnp(result))
 
 ##############################################
 
@@ -182,18 +91,6 @@ def run(name, alg, sizes=5, step=2, nopt=2**16):
         "--text", required=False, default="", help="Print with each result"
     )
     parser.add_argument(
-        "--json",
-        required=False,
-        default=__file__.replace("py", "json"),
-        help="output json data filename",
-    )
-    parser.add_argument(
-        "--usm",
-        required=False,
-        action="store_true",
-        help="Use USM Shared or pure numpy",
-    )
-    parser.add_argument(
         "--test",
         required=False,
         action="store_true",
@@ -205,13 +102,6 @@ def run(name, alg, sizes=5, step=2, nopt=2**16):
     step = int(args.step)
     nopt = int(args.size)
     repeat = int(args.repeat)
-
-    output = {}
-    output["name"] = name
-    output["sizes"] = sizes
-    output["step"] = step
-    output["repeat"] = repeat
-    output["metrics"] = []
 
     if args.test:
         (
@@ -226,71 +116,40 @@ def run(name, alg, sizes=5, step=2, nopt=2**16):
             DEFAULT_RBINS_SQUARED,
             result_p,
         ) = gen_data_np(nopt)
-        result_p = np.zeros_like(DEFAULT_RBINS_SQUARED).astype(np.float32)
         gpairs_python(
             x1, y1, z1, w1, x2, y2, z2, w2, DEFAULT_RBINS_SQUARED, result_p
         )
 
-        if args.usm is True:  # test usm feature
-            (
-                x1,
-                y1,
-                z1,
-                w1,
-                x2,
-                y2,
-                z2,
-                w2,
-                DEFAULT_RBINS_SQUARED,
-                result_usm,
-            ) = gen_data_usm(nopt)
-            alg(
-                nopt,
-                DEFAULT_NBINS,
-                x1,
-                y1,
-                z1,
-                w1,
-                x2,
-                y2,
-                z2,
-                w2,
-                DEFAULT_RBINS_SQUARED,
-                result_usm,
-            )
-            result_n = np.empty((nopt, DEFAULT_NBINS), dtype=np.float32)
-            result_usm.usm_data.copy_to_host(result_n.reshape((-1)).view("u1"))
-        else:
-            (
-                x1_n,
-                y1_n,
-                z1_n,
-                w1_n,
-                x2_n,
-                y2_n,
-                z2_n,
-                w2_n,
-                DEFAULT_RBINS_SQUARED,
-                result_n,
-            ) = gen_data_np(nopt)
+        (
+            x1_n,
+            y1_n,
+            z1_n,
+            w1_n,
+            x2_n,
+            y2_n,
+            z2_n,
+            w2_n,
+            DEFAULT_RBINS_SQUARED_n,
+            result_n,
+        ) = gen_data_dpnp(nopt)
 
-            # pass numpy generated data to kernel
-            alg(
-                nopt,
-                DEFAULT_NBINS,
-                x1,
-                y1,
-                z1,
-                w1,
-                x2,
-                y2,
-                z2,
-                w2,
-                DEFAULT_RBINS_SQUARED,
-                result_n,
-            )
+        # pass numpy generated data to kernel
+        alg(
+            nopt,
+            DEFAULT_NBINS,
+            x1_n,
+            y1_n,
+            z1_n,
+            w1_n,
+            x2_n,
+            y2_n,
+            z2_n,
+            w2_n,
+            DEFAULT_RBINS_SQUARED_n,
+            result_n,
+        )
 
-        if np.allclose(result_p, result_n[0], atol=1e-06):
+        if np.allclose(result_p, result_n, atol=1e-06):
             print("Test succeeded\n")
         else:
             print(
@@ -298,7 +157,7 @@ def run(name, alg, sizes=5, step=2, nopt=2**16):
                 "Python result: ",
                 result_p,
                 "\n numba result:",
-                result_n[0],
+                result_n,
             )
         return
 
@@ -306,32 +165,18 @@ def run(name, alg, sizes=5, step=2, nopt=2**16):
     f2 = open("runtimes.csv", "w", 1)
 
     for i in xrange(sizes):
-        if args.usm is True:
-            (
-                x1,
-                y1,
-                z1,
-                w1,
-                x2,
-                y2,
-                z2,
-                w2,
-                DEFAULT_RBINS_SQUARED,
-                result,
-            ) = gen_data_usm(nopt)
-        else:
-            (
-                x1,
-                y1,
-                z1,
-                w1,
-                x2,
-                y2,
-                z2,
-                w2,
-                DEFAULT_RBINS_SQUARED,
-                result,
-            ) = gen_data_np(nopt)
+        (
+            x1,
+            y1,
+            z1,
+            w1,
+            x2,
+            y2,
+            z2,
+            w2,
+            DEFAULT_RBINS_SQUARED,
+            result,
+        ) = gen_data_dpnp(nopt)
         iterations = xrange(repeat)
 
         alg(
@@ -374,11 +219,9 @@ def run(name, alg, sizes=5, step=2, nopt=2**16):
             ),
             flush=True,
         )
-        output["metrics"].append((nopt, mops, time))
         nopt *= step
         repeat -= step
         if repeat < 1:
             repeat = 1
-    json.dump(output, open(args.json, "w"), indent=2, sort_keys=True)
     f.close()
     f2.close()

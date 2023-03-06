@@ -2,19 +2,9 @@
 #
 # SPDX-License-Identifier: MIT
 
-
-import datetime
-import json
-import os
-import sys
-
-import dpctl
-import dpctl.tensor as dpt
-import numpy as np
-import numpy.random as rnd
-from device_selector import get_device_selector
+import numpy
+import dpnp as np
 from dpbench_datagen.pairwise_distance import gen_rand_data
-from dpbench_datagen.pairwise_distance.generate_data_random import SEED
 from dpbench_python.pairwise_distance.pairwise_distance_python import (
     pairwise_distance_python,
 )
@@ -42,37 +32,31 @@ except NameError:
 ###############################################
 def gen_data(nopt, dims):
     X, Y = gen_rand_data(nopt, dims)
-    return (X, Y, np.empty((nopt, nopt)))
+    return (X, Y, numpy.empty((nopt, nopt)))
 
+def to_dpnp(ref_array):
+    if ref_array.flags["C_CONTIGUOUS"]:
+        order = "C"
+    elif ref_array.flags["F_CONTIGUOUS"]:
+        order = "F"
+    else:
+        order = "K"
+    return np.asarray(
+        ref_array,
+        dtype=ref_array.dtype,
+        order=order,
+        like=None,
+        device="gpu",
+        usm_type=None,
+        sycl_queue=None,
+    )
 
-def gen_data_usm(nopt, dims):
-    X, Y, D = gen_data(nopt, dims)
+def to_numpy(ref_array):
+    return np.asnumpy(ref_array)
 
-    with dpctl.device_context(get_device_selector(is_gpu=True)) as gpu_queue:
-        X_usm = dpt.usm_ndarray(
-            X.shape,
-            dtype=X.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-        Y_usm = dpt.usm_ndarray(
-            Y.shape,
-            dtype=Y.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-        D_usm = dpt.usm_ndarray(
-            D.shape,
-            dtype=D.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-
-    X_usm.usm_data.copy_from_host(X.reshape((-1)).view("u1"))
-    Y_usm.usm_data.copy_from_host(Y.reshape((-1)).view("u1"))
-
-    return (X_usm, Y_usm, D_usm)
-
+def gen_data_dpnp(nopt, dims):
+    X, Y = gen_rand_data(nopt, dims)
+    return (to_dpnp(X), to_dpnp(Y), np.empty((nopt, nopt)))
 
 ##############################################
 
@@ -101,18 +85,6 @@ def run(name, alg, sizes=7, step=2, nopt=2**10):
     )
     parser.add_argument("-d", type=int, default=3, help="Dimensions")
     parser.add_argument(
-        "--json",
-        required=False,
-        default=__file__.replace("py", "json"),
-        help="output json data filename",
-    )
-    parser.add_argument(
-        "--usm",
-        required=False,
-        action="store_true",
-        help="Use USM Shared or pure numpy",
-    )
-    parser.add_argument(
         "--test",
         required=False,
         action="store_true",
@@ -126,31 +98,14 @@ def run(name, alg, sizes=7, step=2, nopt=2**10):
     repeat = int(args.repeat)
     dims = int(args.d)
 
-    output = {}
-    output["name"] = name
-    output["datetime"] = datetime.datetime.strftime(
-        datetime.datetime.now(), "%Y-%m-%d %H:%M:%S"
-    )
-    output["sizes"] = sizes
-    output["step"] = step
-    output["repeat"] = repeat
-    output["randseed"] = SEED
-    output["metrics"] = []
+    dpctl.SyclDevice("gpu")
 
     if args.test:
         X, Y, p_D = gen_data(nopt, dims)
         pairwise_distance_python(X, Y, p_D)
 
-        if args.usm is True:  # test usm feature
-            X, Y, D_usm = gen_data_usm(nopt, dims)
-            # pass usm input data to kernel
-            alg(X, Y, D_usm)
-            n_D = np.empty((nopt, nopt))
-            D_usm.usm_data.copy_to_host(n_D.reshape((-1)).view("u1"))
-        else:
-            X, Y, n_D = gen_data(nopt, dims)
-            # pass numpy generated data to kernel
-            alg(X, Y, n_D)
+        n_X, n_Y, n_D = gen_data_dpnp(nopt, dims)
+        alg(n_X, n_Y, n_D)
 
         if np.allclose(n_D, p_D):
             print("Test succeeded\n")
@@ -162,10 +117,7 @@ def run(name, alg, sizes=7, step=2, nopt=2**10):
     f2 = open("runtimes.csv", "w", 1)
 
     for i in xrange(sizes):
-        if args.usm is True:
-            X, Y, D = gen_data_usm(nopt, dims)
-        else:
-            X, Y, D = gen_data(nopt, dims)
+        X, Y, D = gen_data_dpnp(nopt, dims)
 
         iterations = xrange(repeat)
 
@@ -183,11 +135,9 @@ def run(name, alg, sizes=7, step=2, nopt=2**10):
             ),
             flush=True,
         )
-        output["metrics"].append((nopt, mops, time))
         nopt *= step
         repeat -= step
         if repeat < 1:
             repeat = 1
-    json.dump(output, open(args.json, "w"), indent=2, sort_keys=True)
     f.close()
     f2.close()

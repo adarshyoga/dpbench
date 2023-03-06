@@ -2,9 +2,7 @@
 #
 # SPDX-License-Identifier: MIT
 
-import numpy
-import dpctl
-import dpnp as np
+import numpy as np
 from dpbench_datagen.pairwise_distance import gen_rand_data
 from dpbench_python.pairwise_distance.pairwise_distance_python import (
     pairwise_distance_python,
@@ -33,31 +31,7 @@ except NameError:
 ###############################################
 def gen_data(nopt, dims):
     X, Y = gen_rand_data(nopt, dims)
-    return (X, Y, numpy.empty((nopt, nopt)))
-
-def to_dpnp(ref_array):
-    if ref_array.flags["C_CONTIGUOUS"]:
-        order = "C"
-    elif ref_array.flags["F_CONTIGUOUS"]:
-        order = "F"
-    else:
-        order = "K"
-    return np.asarray(
-        ref_array,
-        dtype=ref_array.dtype,
-        order=order,
-        like=None,
-        device="cpu",
-        usm_type=None,
-        sycl_queue=None,
-    )
-
-def to_numpy(ref_array):
-    return np.asnumpy(ref_array)
-
-def gen_data_dpnp(nopt, dims):
-    X, Y = gen_rand_data(nopt, dims)
-    return (to_dpnp(X), to_dpnp(Y), np.empty((nopt, nopt)))
+    return (X, Y, np.empty((nopt, nopt)))
 
 ##############################################
 
@@ -99,13 +73,11 @@ def run(name, alg, sizes=7, step=2, nopt=2**10):
     repeat = int(args.repeat)
     dims = int(args.d)
 
-    dpctl.SyclDevice("cpu")
-    
     if args.test:
         X, Y, p_D = gen_data(nopt, dims)
         pairwise_distance_python(X, Y, p_D)
 
-        n_X, n_Y, n_D = gen_data_dpnp(nopt, dims)
+        n_X, n_Y, n_D = gen_data(nopt, dims)
         alg(n_X, n_Y, n_D)
 
         if np.allclose(n_D, p_D):
@@ -118,7 +90,7 @@ def run(name, alg, sizes=7, step=2, nopt=2**10):
     f2 = open("runtimes.csv", "w", 1)
 
     for i in xrange(sizes):
-        X, Y, D = gen_data_dpnp(nopt, dims)
+        X, Y, D = gen_data(nopt, dims)
 
         iterations = xrange(repeat)
 

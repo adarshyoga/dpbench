@@ -1,12 +1,11 @@
 import base_gpairs
-import dpnp as np
+import numpy as np
 import numba as nb
-from numba_dpex import dpjit
 
 # This implementation is numba dpex prange version without atomics.
 
 
-@dpjit
+@nb.njit(parallel=True, fastmath=True)
 def count_weighted_pairs_3d_diff_ker(
     n, nbins, x1, y1, z1, w1, x2, y2, z2, w2, rbins_squared, result
 ):
@@ -40,7 +39,7 @@ def count_weighted_pairs_3d_diff_ker(
                 result[i, k] += result[i, j]
 
 
-@dpjit
+@nb.njit(parallel=True, fastmath=True)
 def count_weighted_pairs_3d_diff_agg_ker(nbins, result, n):
     for col_id in nb.prange(nbins):
         for i in range(1, n):
