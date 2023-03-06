@@ -3,10 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 import sys
-
-import dpctl
-import dpnp as np
-import numpy
+import numpy as np
 from dpbench_python.kmeans.kmeans_python import kmeans_python
 from dpbench_datagen.kmeans import gen_rand_data
 
@@ -57,34 +54,6 @@ def gen_data_np(nopt):
     )
     return (X, arrayPclusters, arrayC, arrayCsum, arrayCnumpoint)
 
-def to_dpnp(ref_array):
-    if ref_array.flags["C_CONTIGUOUS"]:
-        order = "C"
-    elif ref_array.flags["F_CONTIGUOUS"]:
-        order = "F"
-    else:
-        order = "K"
-    return np.asarray(
-        ref_array,
-        dtype=ref_array.dtype,
-        order=order,
-        like=None,
-        device="cpu",
-        usm_type=None,
-        sycl_queue=None,
-    )
-
-def to_numpy(ref_array):
-    return np.asnumpy(ref_array)
-
-
-def gen_data_dpnp(nopt):
-    X, arrayPclusters, arrayC, arrayCsum, arrayCnumpoint = gen_data_np(nopt)
-
-    #convert to dpnp
-    return (to_dpnp(X), to_dpnp(arrayPclusters), to_dpnp(arrayC), to_dpnp(arrayCsum), to_dpnp(arrayCnumpoint))
-
-
 ##############################################
 
 
@@ -124,8 +93,6 @@ def run(name, alg, sizes=6, step=2, nopt=2**17):
     repeat = int(args.repeat)
     ndims = 2
     niters = 30
-
-    dpctl.SyclDevice("cpu")
     
     f = open("perf_output.csv", "w")
     f2 = open("runtimes.csv", "w", 1)
@@ -154,7 +121,7 @@ def run(name, alg, sizes=6, step=2, nopt=2**17):
             arrayC_n,
             arrayCsum_n,
             arrayCnumpoint_n,
-        ) = gen_data_dpnp(nopt)
+        ) = gen_data_np(nopt)
 
         # pass numpy generated data to kernel
         alg(
@@ -208,7 +175,7 @@ def run(name, alg, sizes=6, step=2, nopt=2**17):
         return
 
     for i in xrange(sizes):
-        X, arrayPclusters, arrayC, arrayCsum, arrayCnumpoint = gen_data_dpnp(
+        X, arrayPclusters, arrayC, arrayCsum, arrayCnumpoint = gen_data_np(
             nopt
         )
 
