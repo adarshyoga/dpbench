@@ -1,9 +1,9 @@
 import base_rambo
-import dpnp as np
-from numba_dpex import dpjit
+import numpy as np
+import numba as nb
 
 
-@dpjit
+@nb.njit(parallel=True, fastmath=True)
 def rambo(nevts, nout, C1, F1, Q1, output):
     C = 2.0 * C1 - 1.0
     S = np.sqrt(1 - np.square(C))

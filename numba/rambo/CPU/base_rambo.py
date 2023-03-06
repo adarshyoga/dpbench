@@ -2,10 +2,12 @@
 #
 # SPDX-License-Identifier: MIT
 
-import datetime
-import json
-
-import numpy.random as rnd
+import sys
+import dpnp as np
+import numpy
+from dpbench_python.rambo.rambo_python import rambo_python
+from dpbench_datagen.rambo import gen_rand_data
+import dpctl
 
 try:
     import itimer as it
@@ -27,13 +29,43 @@ try:
     xrange
 except NameError:
     xrange = range
-
-SEED = 7777777
-
+    
 ###############################################
 
+def gen_data_np(nevts, nout):
+    return gen_rand_data(nevts, nout)
 
-def run(name, alg, sizes=6, step=2, nopt=2**13):
+def to_dpnp(ref_array):
+    if ref_array.flags["C_CONTIGUOUS"]:
+        order = "C"
+    elif ref_array.flags["F_CONTIGUOUS"]:
+        order = "F"
+    else:
+        order = "K"
+    return np.asarray(
+        ref_array,
+        dtype=ref_array.dtype,
+        order=order,
+        like=None,
+        device="cpu",
+        usm_type=None,
+        sycl_queue=None,
+    )
+
+def to_numpy(ref_array):
+    return np.asnumpy(ref_array)
+
+
+def gen_data_dpnp(nevts, nout):
+    C1, F1, Q1, output = gen_rand_data(nevts, nout)
+
+    #convert to dpnp
+    return (to_dpnp(C1), to_dpnp(F1), to_dpnp(Q1), to_dpnp(output))
+     
+##############################################
+
+# create input data, call rambo computation function (alg)
+def run(name, alg, sizes=5, step=2, nevts=2**20):
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -44,7 +76,7 @@ def run(name, alg, sizes=6, step=2, nopt=2**13):
         "--step", required=False, default=step, help="Factor for each step"
     )
     parser.add_argument(
-        "--size", required=False, default=nopt, help="Initial data size"
+        "--size", required=False, default=nevts, help="Initial data size"
     )
     parser.add_argument(
         "--repeat",
@@ -56,55 +88,70 @@ def run(name, alg, sizes=6, step=2, nopt=2**13):
         "--text", required=False, default="", help="Print with each result"
     )
     parser.add_argument(
-        "--json",
+        "--test",
         required=False,
-        default=__file__.replace("py", "json"),
-        help="output json data filename",
+        action="store_true",
+        help="Check for correctness by comparing output with naieve Python version",
     )
 
     args = parser.parse_args()
     sizes = int(args.steps)
     step = int(args.step)
-    nopt = int(args.size)
+    nevts = int(args.size)
     repeat = int(args.repeat)
+    nout = 4
 
-    output = {}
-    output["name"] = name
-    output["datetime"] = datetime.datetime.strftime(
-        datetime.datetime.now(), "%Y-%m-%d %H:%M:%S"
-    )
-    output["sizes"] = sizes
-    output["step"] = step
-    output["repeat"] = repeat
-    output["randseed"] = SEED
-    output["metrics"] = []
+    dpctl.SyclDevice("cpu")
 
-    rnd.seed(SEED)
+    if args.test:
+        C1, F1, Q1, output = gen_data_np(nevts, nout)
+        rambo_python(
+            nevts, nout, C1, F1, Q1, output
+        )
 
-    f = open("perf_output.csv", "w", 1)
+        C1_dpnp, F1_dpnp, Q1_dpnp, output_dpnp = gen_data_dpnp(nevts, nout)
+        # pass numpy generated data to kernel
+        alg(nevts, nout, C1_dpnp, F1_dpnp, Q1_dpnp, output_dpnp)
+
+        if numpy.allclose(to_numpy(output_dpnp), output):
+            print("Test succeeded\n")
+        else:
+            print("Test failed\n")
+        return
+
+    f1 = open("perf_output.csv", "w", 1)
     f2 = open("runtimes.csv", "w", 1)
 
     for i in xrange(sizes):
-        iterations = xrange(repeat)
+        # generate input data
+        C1_dpnp, F1_dpnp, Q1_dpnp, output_dpnp = gen_data_dpnp(nevts, nout)
 
-        alg(nopt)  # warmup
+        iterations = xrange(repeat)
+        print("ERF: {}: Size: {}".format(name, nevts), end=" ", flush=True)
+        sys.stdout.flush()
+
+        # call algorithm
+        alg(nevts, nout, C1_dpnp, F1_dpnp, Q1_dpnp, output_dpnp)
+
         t0 = now()
         for _ in iterations:
-            alg(nopt)
+            alg(nevts, nout, C1_dpnp, F1_dpnp, Q1_dpnp, output_dpnp)
 
-        mops, time = get_mops(t0, now(), nopt)
-        f.write(str(nopt) + "," + str(mops * repeat / 1e6) + "\n")
-        f2.write(str(nopt) + "," + str(time) + "\n")
+        mops, time = get_mops(t0, now(), nevts)
+
+        # record performance data - mops, time
         print(
             "ERF: {:15s} | Size: {:10d} | MOPS: {:15.2f} | TIME: {:10.6f}".format(
-                name, nopt, mops * repeat, time
+                name, nevts, mops * 2 * repeat, time
             ),
             flush=True,
         )
-        output["metrics"].append((nopt, mops, time))
+        f1.write(str(nevts) + "," + str(mops * 2 * repeat) + "\n")
+        f2.write(str(nevts) + "," + str(time) + "\n")
+        nevts *= step
+        repeat -= step
+        if repeat < 1:
+            repeat = 1
 
-        nopt *= step
-
-    json.dump(output, open(args.json, "w"), indent=2, sort_keys=True)
-    f.close()
+    f1.close()
     f2.close()
