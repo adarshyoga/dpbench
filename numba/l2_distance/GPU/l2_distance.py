@@ -2,29 +2,21 @@
 #
 # SPDX-License-Identifier: MIT
 
-import base_l2_distance
-import dpctl
+import numba_dpex as nbdx
 import numpy as np
+import base_l2_distance
 
-import numba as nb
-
-__njit = nb.njit(parallel=True, fastmath=True)
-
-
-@__njit
-def l2_distance_kernel(a, b):
-    sub = a - b
-    sq = np.square(sub)
-    sum = np.sum(sq)
-    d = np.sqrt(sum)
-    return d
+@nbdx.kernel
+def l2_norm_kernel(a, d):
+    i = nbdx.get_global_id(0)
+    O = a.shape[1]
+    d[i] = 0.0
+    for k in range(O):
+        d[i] += a[i, k] * a[i, k]
+    d[i] = np.sqrt(d[i])
 
 
-def l2_distance(a, b, _):
-    with dpctl.device_context(
-        base_l2_distance.get_device_selector(is_gpu=True)
-    ):
-        return l2_distance_kernel(a, b)
+def l2_norm(a, d):
+    l2_norm_kernel[a.shape[0],](a, d)
 
-
-base_l2_distance.run("l2 distance", l2_distance)
+base_l2_distance.run("l2 distance kernel", l2_norm)

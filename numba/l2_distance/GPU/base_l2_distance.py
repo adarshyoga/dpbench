@@ -2,74 +2,73 @@
 #
 # SPDX-License-Identifier: MIT
 
-import datetime
-import json
-import os
 import sys
-from timeit import default_timer
-
-import dpctl
-import dpctl.tensor as dpt
-import numpy as np
-
-# import numpy.random_intel as rnd
-import numpy.random as rnd
-from device_selector import get_device_selector
-from dpbench_datagen.l2_distance import gen_data
-from dpbench_datagen.l2_distance.generate_data_random import SEED
+import dpnp as np
+import numpy
 from dpbench_python.l2_distance.l2_distance_python import l2_distance_python
+from dpbench_datagen.l2_distance import gen_data
+import dpctl
 
-now = default_timer
-get_mops = lambda t0, t1, n: (n / (t1 - t0), t1 - t0)
+try:
+    import itimer as it
+
+    now = it.itime
+    get_mops = it.itime_mops_now
+except:
+    from timeit import default_timer
+
+    now = default_timer
+    get_mops = lambda t0, t1, n: (n / (t1 - t0), t1 - t0)
 
 ######################################################
 # GLOBAL DECLARATIONS THAT WILL BE USED IN ALL FILES #
 ######################################################
+
 # make xrange available in python 3
 try:
     xrange
 except NameError:
     xrange = range
 
-
+RISK_FREE = 0.1
+VOLATILITY = 0.2
+    
 ###############################################
 
+def gen_data_np(nopt, dims):
+    return gen_data(nopt, dims)
 
-def gen_data_usm(nopt, dims):
-    x, y = gen_data(nopt, dims, np.float32)
-    distance = np.asarray([0.0]).astype(np.float32)
+def to_dpnp(ref_array):
+    if ref_array.flags["C_CONTIGUOUS"]:
+        order = "C"
+    elif ref_array.flags["F_CONTIGUOUS"]:
+        order = "F"
+    else:
+        order = "K"
+    return np.asarray(
+        ref_array,
+        dtype=ref_array.dtype,
+        order=order,
+        like=None,
+        device="gpu",
+        usm_type=None,
+        sycl_queue=None,
+    )
 
-    with dpctl.device_context(get_device_selector(is_gpu=True)) as gpu_queue:
-        x_usm = dpt.usm_ndarray(
-            x.shape,
-            dtype=x.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-        y_usm = dpt.usm_ndarray(
-            y.shape,
-            dtype=y.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-        distance_usm = dpt.usm_ndarray(
-            distance.shape,
-            dtype=distance.dtype,
-            buffer="device",
-            buffer_ctor_kwargs={"queue": gpu_queue},
-        )
-
-    x_usm.usm_data.copy_from_host(x.reshape((-1)).view("|u1"))
-    y_usm.usm_data.copy_from_host(y.reshape((-1)).view("|u1"))
-    distance_usm.usm_data.copy_from_host(distance.reshape((-1)).view("|u1"))
-
-    return x_usm, y_usm, distance_usm
+def to_numpy(ref_array):
+    return np.asnumpy(ref_array)
 
 
+def gen_data_dpnp(nopt, dims):
+    X ,Y = gen_data_np(nopt, dims)
+
+    #convert to dpnp
+    return (to_dpnp(X), to_dpnp(Y))
+     
 ##############################################
 
-
-def run(name, alg, sizes=5, step=2, nopt=2**25):
+# create input data, call l2_distance computation function (alg)
+def run(name, alg, sizes=10, step=2, nopt=2**20):
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -92,21 +91,12 @@ def run(name, alg, sizes=5, step=2, nopt=2**25):
         "--text", required=False, default="", help="Print with each result"
     )
     parser.add_argument(
-        "--json",
-        required=False,
-        default=__file__.replace("py", "json"),
-        help="output json data filename",
-    )
-    parser.add_argument("-d", type=int, default=1, help="Dimensions")
-    parser.add_argument(
-        "--test", required=False, action="store_true", help="Validation"
-    )
-    parser.add_argument(
-        "--usm",
+        "--test",
         required=False,
         action="store_true",
-        help="Use USM Shared or pure numpy",
+        help="Check for correctness by comparing output with naieve Python version",
     )
+    parser.add_argument("-d", type=int, default=3, help="Dimensions")
 
     args = parser.parse_args()
     sizes = int(args.steps)
@@ -115,109 +105,57 @@ def run(name, alg, sizes=5, step=2, nopt=2**25):
     repeat = int(args.repeat)
     dims = int(args.d)
 
-    f = open("perf_output.csv", "w", 1)
-    f2 = open("runtimes.csv", "w", 1)
+    dpctl.SyclDevice("gpu")
 
-    output = {}
-    output["name"] = name
-    output["datetime"] = datetime.datetime.strftime(
-        datetime.datetime.now(), "%Y-%m-%d %H:%M:%S"
-    )
-    output["sizes"] = sizes
-    output["step"] = step
-    output["repeat"] = repeat
-    output["dims"] = dims
-    output["randseed"] = SEED
-    output["metrics"] = []
-
-    times = np.empty(repeat)
     if args.test:
-        X, Y = gen_data(nopt, dims, np.float32)
-        p_dis = l2_distance_python(X, Y)
+        X, Y = gen_data_np(nopt, dims)
+        l2_distance_python(
+            X, Y
+        )
 
-        if args.usm is True:  # test usm feature
-            X_usm, Y_usm, distance = gen_data_usm(nopt, dims)
-            n_dis = alg(X_usm, Y_usm, distance)
+        X_dpnp, Y_dpnp = gen_data_dpnp(nopt, dims)
+        # pass numpy generated data to kernel
+        alg(X_dpnp, Y_dpnp)
 
+        if numpy.allclose(to_numpy(Y_dpnp), Y):
+            print("Test succeeded\n")
         else:
-            distance = np.asarray([0.0]).astype(np.float32)
-            n_dis = alg(X, Y, distance)
-
-        # RMS error grows proportional to sqrt(n)
-        # absolute(a - b) <= (atol + rtol * absolute(b))
-        if np.allclose(n_dis, p_dis, rtol=1e-05 * np.sqrt(nopt)):
-            print(
-                "Test succeeded. Python dis: ",
-                p_dis,
-                " Numba dis: ",
-                n_dis,
-                "\n",
-            )
-        else:
-            print(
-                "Test failed. Python dis: ", p_dis, " Numba dis: ", n_dis, "\n"
-            )
+            print("Test failed\n")
         return
 
-    for _ in xrange(sizes):
-        if args.usm is True:
-            X, Y, distance = gen_data_usm(nopt, dims)
-        else:
-            X, Y = gen_data(nopt, dims, np.float32)
-            distance = np.asarray([0.0]).astype(np.float32)
+    f1 = open("perf_output.csv", "w", 1)
+    f2 = open("runtimes.csv", "w", 1)
+
+    for i in xrange(sizes):
+        # generate input data
+        X, Y = gen_data_dpnp(nopt, dims)
 
         iterations = xrange(repeat)
-        # print("ERF: {}: Size: {}".format(name, nopt), end=' ', flush=True)
+        print("ERF: {}: Size: {}".format(name, nopt), end=" ", flush=True)
         sys.stdout.flush()
 
-        n_dis = alg(X, Y, distance)  # warmup
+        # call algorithm
+        alg(X, Y)  # warmup
 
-        for i in iterations:
-            distance = np.asarray([0.0]).astype(np.float32)
+        t0 = now()
+        for _ in iterations:
+            alg(X, Y)
 
-            X, Y = gen_data(nopt, dims, np.float32)
-            p_dis = l2_distance_python(X, Y)
+        mops, time = get_mops(t0, now(), nopt)
 
-            t0 = default_timer()
-            n_dis = alg(X, Y, distance)
-            t1 = default_timer()
-
-            times[i] = t1 - t0
-
-            if np.allclose(n_dis, p_dis, rtol=1e-05 * np.sqrt(nopt)):
-                print(
-                    "Test succeeded. Python dis: ",
-                    p_dis,
-                    " Numba dis: ",
-                    n_dis,
-                    "\n",
-                )
-            else:
-                print(
-                    "Test failed. Python dis: ",
-                    p_dis,
-                    " Numba dis: ",
-                    n_dis,
-                    "\n",
-                )
-
-        time = np.median(times)
-
+        # record performance data - mops, time
         print(
-            "ERF: {:15s} | Size: {:10d} | TIME: {:10.6f}".format(
-                name, nopt, time
+            "ERF: {:15s} | Size: {:10d} | MOPS: {:15.2f} | TIME: {:10.6f}".format(
+                name, nopt, mops * 2 * repeat, time
             ),
             flush=True,
         )
-        output["metrics"].append((nopt, 0, time))  # zero placeholder for mops
-        # f.write(str(nopt) + "," + str(mops * 2 * repeat) + "\n")
+        f1.write(str(nopt) + "," + str(mops * 2 * repeat) + "\n")
         f2.write(str(nopt) + "," + str(time) + "\n")
-
         nopt *= step
         repeat -= step
         if repeat < 1:
             repeat = 1
 
-    json.dump(output, open(args.json, "w"), indent=2, sort_keys=True)
-    f.close()
+    f1.close()
     f2.close()

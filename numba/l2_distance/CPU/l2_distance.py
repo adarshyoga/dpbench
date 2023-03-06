@@ -2,19 +2,21 @@
 #
 # SPDX-License-Identifier: MIT
 
-
-import base_l2_distance
+import numba_dpex as nbdx
 import numpy as np
-from dpbench_decorators import jit
+import base_l2_distance
+
+@nbdx.kernel
+def l2_norm_kernel(a, d):
+    i = nbdx.get_global_id(0)
+    O = a.shape[1]
+    d[i] = 0.0
+    for k in range(O):
+        d[i] += a[i, k] * a[i, k]
+    d[i] = np.sqrt(d[i])
 
 
-@jit(nopython=True, parallel=True, fastmath=True)
-def l2_distance(a, b):
-    sub = a - b
-    sq = np.square(sub)
-    sum = np.sum(sq)
-    d = np.sqrt(sum)
-    return d
+def l2_norm(a, d):
+    l2_norm_kernel[a.shape[0],](a, d)
 
-
-base_l2_distance.run("l2 distance", l2_distance)
+base_l2_distance.run("l2 distance kernel", l2_norm)
