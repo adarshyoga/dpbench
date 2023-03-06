@@ -2,21 +2,18 @@
 #
 # SPDX-License-Identifier: MIT
 
+
 from math import erf, exp, log, sqrt
 
 import base_bs_erf
-import dpctl
-import numba_dpex
-from device_selector import get_device_selector
+import numba_dpex as nb
 
-
-# blackscholes implemented using dpex.kernel
-@numba_dpex.kernel
+@nb.kernel
 def black_scholes(nopt, price, strike, t, rate, vol, call, put):
     mr = -rate
     sig_sig_two = vol * vol * 2
 
-    i = numba_dpex.get_global_id(0)
+    i = nb.get_global_id(0)
 
     P = price[i]
     S = strike[i]
@@ -43,11 +40,10 @@ def black_scholes(nopt, price, strike, t, rate, vol, call, put):
 
 
 def black_scholes_driver(nopt, price, strike, t, rate, vol, call, put):
-    # offload blackscholes computation to CPU (toggle level0 or opencl driver).
-    with dpctl.device_context(get_device_selector(is_gpu=False)):
-        black_scholes[nopt, numba_dpex.DEFAULT_LOCAL_SIZE](
-            nopt, price, strike, t, rate, vol, call, put
-        )
+    # offload blackscholes computation to GPU (toggle level0 or opencl driver).
+    black_scholes[nopt,](
+        nopt, price, strike, t, rate, vol, call, put
+    )
 
 
 # call the run function to setup input data and performance data infrastructure

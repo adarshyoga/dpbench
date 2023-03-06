@@ -4,16 +4,15 @@
 
 from math import erf, exp, log, sqrt
 import base_bs_erf
-from numba import prange
-from numba_dpex import dpjit
+import numba as nb
 
 
-@dpjit
+@nb.njit(parallel=True, fastmath=True)
 def black_scholes(nopt, price, strike, t, rate, volatility, call, put):
     mr = -rate
     sig_sig_two = volatility * volatility * 2
 
-    for i in prange(nopt):
+    for i in nb.prange(nopt):
         P = price[i]
         S = strike[i]
         T = t[i]
@@ -37,5 +36,4 @@ def black_scholes(nopt, price, strike, t, rate, volatility, call, put):
         call[i] = r
         put[i] = r - P + Se
 
-# call the run function to setup input data and performance data infrastructure
-base_bs_erf.run("Numba@jit-loop-par", black_scholes)
+base_bs_erf.run("numba npr", black_scholes)
