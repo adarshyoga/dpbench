@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 import numpy
+import dpctl
 import dpnp as np
 from dpbench_datagen.pairwise_distance import gen_rand_data
 from dpbench_python.pairwise_distance.pairwise_distance_python import (
