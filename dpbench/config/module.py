@@ -12,8 +12,9 @@ class Module:
     """Benchmark set configuration."""
 
     benchmark_configs_path: str = ""
+    benchmark_configs_recursive: bool = False
     framework_configs_path: str = ""
-    impl_postfix_path: str = ""
+    precision_dtypes_path: str = ""
 
     benchmarks_module: str = ""
     path: str = ""

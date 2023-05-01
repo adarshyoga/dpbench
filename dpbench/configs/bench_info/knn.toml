@@ -32,6 +32,7 @@ array_args = [
 output_args = [
     "predictions",
 ]
+expected_failure_implementations = ["numba_dpex_p"]
 
 [benchmark.parameters.S]
 test_size = 1024
@@ -62,6 +63,8 @@ k = 5
 
 [benchmark.init]
 func_name = "initialize"
+types_dict_name="types_dict"
+precision="double"
 input_args = [
     "test_size",
     "train_size",
@@ -69,6 +72,7 @@ input_args = [
     "classes_num",
     "seed_test",
     "seed_train",
+    "types_dict",
 ]
 output_args = [
     "x_train",

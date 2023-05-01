@@ -10,7 +10,6 @@ import os
 import pkgutil
 import re
 import sys
-from typing import Callable
 
 import tomli
 
@@ -21,9 +20,9 @@ from .implementation_postfix import Implementation
 from .module import Module
 
 
-def read_configs(
+def read_configs(  # noqa: C901: TODO: move modules into config
     benchmarks: list[str] = None,
-    postfixes: list[str] = None,
+    implementations: list[str] = None,
 ) -> Config:
     """Read all configuration files and populate those settings into Config.
 
@@ -34,10 +33,11 @@ def read_configs(
     Returns:
         Configuration object with populated configurations.
     """
-    config: Config = Config([], [], [])
+    config: Config = Config()
 
     dirname: str = os.path.dirname(__file__)
 
+    # TODO: move into config
     modules: list[Module] = [
         Module(
             benchmark_configs_path=os.path.join(
@@ -47,8 +47,8 @@ def read_configs(
             framework_configs_path=os.path.join(
                 dirname, "../configs/framework_info"
             ),
-            impl_postfix_path=os.path.join(
-                dirname, "../configs/impl_postfix.toml"
+            precision_dtypes_path=os.path.join(
+                dirname, "../configs/precision_dtypes.toml"
             ),
         ),
     ]
@@ -57,13 +57,28 @@ def read_configs(
     if no_dpbench:
         modules[0].benchmark_configs_path = ""
 
-    npbench_root = os.getenv("NPBENCH_ROOT")
-    if npbench_root:
+    with_npbench = os.getenv("WITH_NPBENCH")
+    if with_npbench:
         modules.append(
             Module(
-                benchmark_configs_path=os.path.join(npbench_root, "bench_info"),
-                benchmarks_module="npbench.benchmarks",
-                path=npbench_root,
+                benchmark_configs_path=os.path.join(
+                    dirname, "../configs/bench_info/npbench"
+                ),
+                benchmarks_module="dpbench.benchmarks.npbench",
+                path=os.path.join(dirname, "../benchmarks/npbench"),
+            )
+        )
+
+    with_polybench = os.getenv("WITH_POLYBENCH")
+    if with_polybench:
+        modules.append(
+            Module(
+                benchmark_configs_path=os.path.join(
+                    dirname, "../configs/bench_info/polybench"
+                ),
+                benchmark_configs_recursive=True,
+                benchmarks_module="dpbench.benchmarks.polybench",
+                path=os.path.join(dirname, "../benchmarks/polybench"),
             )
         )
 
@@ -72,28 +87,28 @@ def read_configs(
             read_benchmarks(
                 config,
                 mod.benchmark_configs_path,
+                recursive=mod.benchmark_configs_recursive,
                 parent_package=mod.benchmarks_module,
                 benchmarks=benchmarks,
             )
         if mod.framework_configs_path != "":
             read_frameworks(config, mod.framework_configs_path)
-        if mod.impl_postfix_path != "":
-            read_implementation_postfixes(config, mod.impl_postfix_path)
+        if mod.precision_dtypes_path != "":
+            read_precision_dtypes(config, mod.precision_dtypes_path)
         if mod.path != "":
             sys.path.append(mod.path)
 
+    for framework in config.frameworks:
+        config.implementations += framework.postfixes
+
+    if implementations is None:
+        implementations = [impl.postfix for impl in config.implementations]
+
     for benchmark in config.benchmarks:
-        postfixes_tmp = postfixes
-        if postfixes_tmp is None:
-            postfixes_tmp = [impl.postfix for impl in config.implementations]
         read_benchmark_implementations(
             benchmark,
-            config.implementations,
-            postfixes=postfixes_tmp,
+            implementations,
         )
-
-    if npbench_root:
-        fix_npbench_configs(config.benchmarks)
 
     return config
 
@@ -101,6 +116,7 @@ def read_configs(
 def read_benchmarks(
     config: Config,
     bench_info_dir: str,
+    recursive: bool = False,
     parent_package: str = "dpbench.benchmarks",
     benchmarks: list[str] = None,
 ):
@@ -109,21 +125,30 @@ def read_benchmarks(
     Args:
         config: Configuration object where settings should be populated.
         bench_info_dir: Path to the directory with configuration files.
+        recursive: Either to load configs recursively.
         parent_package: Package that contains benchmark packages.
         benchmarks: list of benchmarks to load. None means all.
-
-    Returns: nothing.
     """
     for bench_info_file in os.listdir(bench_info_dir):
-        if not bench_info_file.endswith(".toml"):
+        bench_info_file_path = os.path.join(bench_info_dir, bench_info_file)
+
+        if os.path.isdir(bench_info_file_path) and recursive:
+            read_benchmarks(
+                config=config,
+                bench_info_dir=bench_info_file_path,
+                recursive=recursive,
+                parent_package=parent_package + "." + bench_info_file,
+                benchmarks=benchmarks,
+            )
+
+        if (
+            not os.path.isfile(bench_info_file_path)
+            or not bench_info_file.endswith(".toml")
+            or (benchmarks and not bench_info_file[:-5] in benchmarks)
+        ):
             continue
 
-        if benchmarks and not bench_info_file[:-5] in benchmarks:
-            continue
-
-        bench_info_file = os.path.join(bench_info_dir, bench_info_file)
-
-        with open(bench_info_file) as file:
+        with open(bench_info_file_path) as file:
             file_contents = file.read()
 
         bench_info = tomli.loads(file_contents)
@@ -144,8 +169,6 @@ def read_frameworks(config: Config, framework_info_dir: str) -> None:
     Args:
         config: Configuration object where settings should be populated.
         framework_info_dir: Path to the directory with configuration files.
-
-    Returns: nothing.
     """
     for framework_info_file in os.listdir(framework_info_dir):
         if not framework_info_file.endswith(".toml"):
@@ -173,8 +196,6 @@ def read_implementation_postfixes(
     Args:
         config: Configuration object where settings should be populated.
         impl_postfix_file: Path to the configuration file.
-
-    Returns: nothing.
     """
     with open(impl_postfix_file) as file:
         file_contents = file.read()
@@ -185,6 +206,19 @@ def read_implementation_postfixes(
         config.implementations.append(implementation)
 
 
+def read_precision_dtypes(config: Config, precision_dtypes_file: str) -> None:
+    """Read and populate dtype_obj data types file.
+
+    Args:
+        config: Configuration object where settings should be populated.
+        precision_dtypes_file: Path to the configuration file.
+    """
+    with open(precision_dtypes_file) as file:
+        file_contents = file.read()
+
+    config.dtypes = tomli.loads(file_contents)
+
+
 def setup_init(config: Benchmark, modules: list[str]) -> None:
     """Read and discover initialization module and function.
 
@@ -192,8 +226,6 @@ def setup_init(config: Benchmark, modules: list[str]) -> None:
         config: Benchmark configuration object where settings should be
             populated.
         modules: List of available modules for the benchmark to find init.
-
-    Returns: nothing.
     """
     if config.init is None:
         return
@@ -201,6 +233,8 @@ def setup_init(config: Benchmark, modules: list[str]) -> None:
     init_module = None
     if config.module_name in modules:
         init_module = config.module_name
+    elif config.short_name in modules:
+        init_module = config.short_name
     elif config.module_name + "_initialize" in modules:
         init_module = config.module_name + "_initialize"
 
@@ -220,21 +254,45 @@ def setup_init(config: Benchmark, modules: list[str]) -> None:
             )
 
 
+def discover_module_name_and_postfix(module: str, config: Config):
+    """Discover real module name and postfix for the implementation.
+
+    Args:
+        module: Name of the root python module (either python file or top level
+            folder for sycl).
+        config: Module config.
+
+    Returns: (module_name, postfix).
+    """
+    postfix = ""
+    module_name = ""
+
+    if module.endswith("sycl_native_ext"):
+        module_name = (
+            f"{module}.{config.module_name}_sycl._{config.module_name}_sycl"
+        )
+        postfix = "sycl"
+    else:
+        module_name = module
+        if module.startswith(config.module_name):
+            postfix = module[len(config.module_name) + 1 :]
+        elif module.startswith(config.short_name):
+            postfix = module[len(config.short_name) + 1 :]
+
+    return module_name, postfix
+
+
 def read_benchmark_implementations(
     config: Benchmark,
-    known_implementations: list[Implementation],
-    postfixes: list[str] = None,
+    implementations: list[str] = None,
 ) -> None:
     """Read and discover implementation modules and functions.
 
     Args:
         config: Benchmark configuration object where settings should be
             populated.
-        postfixes: List of postfixes to import. Set it to None to import all
-            available implementations. It does not affect initialization import.
-        implementations: Prepopulated list of implementations.
-
-    Returns: nothing.
+        implementations: List of postfixes to import. It does not affect
+            initialization import.
 
     Raises:
         RuntimeError: Implementation file does not match any known postfix.
@@ -258,26 +316,11 @@ def read_benchmark_implementations(
     setup_init(config, modules)
 
     for module in modules:
-        postfix = ""
-        module_name = ""
+        module_name, postfix = discover_module_name_and_postfix(module, config)
 
-        if module.endswith("sycl_native_ext"):
-            module_name = (
-                f"{module}.{config.module_name}_sycl._{config.module_name}_sycl"
-            )
-            postfix = "sycl"
-        else:
-            module_name = module
-            postfix = module[len(config.module_name) + 1 :]
-
-        if postfixes and postfix not in postfixes:
-            continue
-
-        if config.init and config.init.module_name.endswith(module_name):
-            continue
-
-        if postfix not in [impl.postfix for impl in known_implementations]:
-            logging.warning(f"Skipping postfix: {module}")
+        if (postfix not in implementations) or (
+            config.init and config.init.module_name.endswith(module_name)
+        ):
             continue
 
         func_name: str = None
@@ -287,6 +330,8 @@ def read_benchmark_implementations(
             impl_mod = importlib.import_module(package_path)
 
             for func in [
+                module,
+                f"{module}_{postfix}",
                 config.module_name,
                 f"{config.module_name}_{postfix}",
                 "kernel",
@@ -318,72 +363,3 @@ def get_benchmark_index(configs: list[Benchmark], module_name: str) -> int:
         ),
         None,
     )
-
-
-def fix_npbench_configs(configs: list[Benchmark]):
-    """Applies configuration fixes for some npbench benchmarks.
-
-    Fixes required due to the difference in framework implementations.
-    """
-    index = get_benchmark_index(configs, "mandelbrot1")
-    if index is not None:
-        configs[index] = modify_args(
-            configs[index], modifier=lambda s: s.lower()
-        )
-
-    index = get_benchmark_index(configs, "mandelbrot2")
-    if index is not None:
-        configs[index] = modify_args(
-            configs[index],
-            modifier=lambda s: "itermax" if s == "maxiter" else s.lower(),
-        )
-
-    index = get_benchmark_index(configs, "conv2d")
-    if index is not None:
-        config = configs[index]
-
-        config.module_name = "conv2d_bias"
-        configs[index] = config
-
-        for impl in config.implementations:
-            impl.func_name = "conv2d_bias"
-
-    index = get_benchmark_index(configs, "nbody")
-    if index is not None:
-        configs[index].output_args.append("pos")
-        configs[index].output_args.append("vel")
-
-    index = get_benchmark_index(configs, "scattering_self_energies")
-    if index is not None:
-        configs[index].output_args.append("Sigma")
-
-    index = get_benchmark_index(configs, "correlation")
-    if index is not None:
-        configs[index].output_args.append("data")
-
-    index = get_benchmark_index(configs, "doitgen")
-    if index is not None:
-        configs[index].output_args.append("A")
-
-
-def modify_args(config: Benchmark, modifier: Callable[[str], str]) -> Benchmark:
-    """Applies modifier to function argument names.
-
-    Current implementation applies modifier to
-      - all presets keys, not preset names;
-      - all input_args;
-      - all array_args;
-      - all output_args.
-    """
-    config.parameters = Presets(
-        {
-            preset: {modifier(k): v for k, v in parameters.items()}
-            for preset, parameters in config.parameters.items()
-        }
-    )
-
-    config.input_args = [modifier(arg) for arg in config.input_args]
-    config.array_args = [modifier(arg) for arg in config.array_args]
-    config.output_args = [modifier(arg) for arg in config.output_args]
-
-    return config

@@ -24,24 +24,22 @@ from dpbench.infrastructure import timer
 
 from . import timeout_decorator as tout
 from .datamodel import Result, store_results
-from .dpcpp_framework import DpcppFramework
-from .dpnp_framework import DpnpFramework
 from .enums import ErrorCodes, ValidationStatusCodes
-from .framework import Framework
-from .numba_dpex_framework import NumbaDpexFramework
-from .numba_framework import NumbaFramework
+from .frameworks import Framework, build_framework_map
 
 # A global namedtuple to store a function implementing a benchmark along with
 # the name of the implementation.
 BenchmarkImplFn = namedtuple("BenchmarkImplFn", "name fn")
 
 
-def _reset_output_args(bench, fmwrk, inputs, preset):
+def _reset_output_args(bench, fmwrk, inputs, preset, precision):
     output_args = bench.info.output_args
     array_args = bench.info.array_args
     for arg in inputs.keys():
         if arg in output_args and arg in array_args:
-            original_data = bench.get_data(preset=preset)[arg]
+            original_data = bench.get_data(
+                preset=preset, framework=fmwrk, global_precision=precision
+            )[arg]
             inputs.update({arg: fmwrk.copy_to_func()(original_data)})
 
 
@@ -67,6 +65,7 @@ def _exec(
     impl_postfix,
     preset,
     repeat,
+    precision,
     get_args,
     results_dict,
     copy_output,
@@ -90,6 +89,7 @@ def _exec(
         preset : A problem size entry defined in the bench_info JSON.
         timeout : Number of seconds after which the execution is killed.
         repeat : Number of repetitions of the benchmark execution.
+        precision: The precsion to use for benchmark input data.
         args : Input arguments to benchmark implementation function.
         results_dict : A dictionary where timing and other results are stored.
         copy_output : A flag that controls copying output.
@@ -100,7 +100,13 @@ def _exec(
     inputs = dict()
 
     with timer.timer() as t:
-        args = get_args(bench.get_data(preset=preset), array_args, fmwrk)
+        args = get_args(
+            bench.get_data(
+                preset=preset, framework=fmwrk, global_precision=precision
+            ),
+            array_args,
+            fmwrk,
+        )
 
     results_dict["setup_time"] = t.get_elapsed_time()
 
@@ -112,7 +118,15 @@ def _exec(
 
     for arg in input_args:
         if arg not in array_args:
-            inputs.update({arg: bench.get_data(preset=preset)[arg]})
+            inputs.update(
+                {
+                    arg: bench.get_data(
+                        preset=preset,
+                        framework=fmwrk,
+                        global_precision=precision,
+                    )[arg]
+                }
+            )
         else:
             inputs.update({arg: args[arg]})
 
@@ -130,7 +144,13 @@ def _exec(
             return
 
     results_dict["warmup_time"] = t.get_elapsed_time()
-    _reset_output_args(bench=bench, fmwrk=fmwrk, inputs=inputs, preset=preset)
+    _reset_output_args(
+        bench=bench,
+        fmwrk=fmwrk,
+        inputs=inputs,
+        preset=preset,
+        precision=precision,
+    )
     exec_times = [0] * repeat
 
     retval = None
@@ -141,38 +161,69 @@ def _exec(
         # Do not reset the output from the last repeat
         if i < repeat - 1:
             _reset_output_args(
-                bench=bench, fmwrk=fmwrk, inputs=inputs, preset=preset
+                bench=bench,
+                fmwrk=fmwrk,
+                inputs=inputs,
+                preset=preset,
+                precision=precision,
             )
 
     results_dict["exec_times"] = exec_times
 
     # Get the output data
     if copy_output:
-        out_args = bench.info.output_args
-        array_args = bench.info.array_args
-        output_arrays = dict()
-        with timer.timer() as t:
-            for out_arg in out_args:
-                if out_arg in array_args:
-                    output_arrays.update(
-                        {out_arg: fmwrk.copy_from_func()(inputs[out_arg])}
-                    )
-        run_datetime = datetime.now().strftime("%m.%d.%Y_%H.%M.%S")
-        out_filename = (
-            bench.bname + "_" + impl_postfix + "_" + preset + "." + run_datetime
+        _exec_copy_output(
+            bench, fmwrk, impl_postfix, preset, retval, inputs, results_dict
         )
-        out_filename = tempfile.gettempdir() + "/" + out_filename
-        np.savez_compressed(out_filename, **output_arrays)
-        results_dict["outputs"] = out_filename + ".npz"
-        results_dict["teardown_time"] = t.get_elapsed_time()
-
-        # Special case: if the benchmark implementation returns anything, then
-        # add that to the results dict
-        if retval is not None:
-            results_dict["return-value"] = retval
 
     results_dict["error_state"] = ErrorCodes.SUCCESS
     results_dict["error_msg"] = ""
+
+
+def _exec_copy_output(
+    bench: "Benchmark",
+    fmwrk,
+    impl_postfix,
+    preset,
+    retval,
+    inputs: dict,
+    results_dict,
+):
+    out_args = bench.info.output_args
+    array_args = bench.info.array_args
+    output_arrays = dict()
+    with timer.timer() as t:
+        for out_arg in out_args:
+            if out_arg in array_args:
+                output_arrays.update(
+                    {out_arg: fmwrk.copy_from_func()(inputs[out_arg])}
+                )
+    run_datetime = datetime.now().strftime("%m.%d.%Y_%H.%M.%S")
+    out_filename = (
+        bench.bname + "_" + impl_postfix + "_" + preset + "." + run_datetime
+    )
+    out_filename = tempfile.gettempdir() + "/" + out_filename
+    np.savez_compressed(out_filename, **output_arrays)
+    results_dict["outputs"] = out_filename + ".npz"
+    results_dict["teardown_time"] = t.get_elapsed_time()
+
+    # Special case: if the benchmark implementation returns anything, then
+    # add that to the results dict
+    if retval is not None:
+        results_dict["return-value"] = convert_to_numpy(retval, fmwrk)
+
+
+def convert_to_numpy(value: any, fmwrk: Framework) -> any:
+    """Calls copy_from_func on all array values."""
+    if isinstance(value, tuple):
+        retval_list = list(value)
+        for i, _ in enumerate(retval_list):
+            retval_list[i] = fmwrk.copy_from_func()(retval_list[i])
+        value = tuple(retval_list)
+    else:
+        value = fmwrk.copy_from_func()(value)
+
+    return value
 
 
 class BenchmarkResults:
@@ -495,6 +546,7 @@ class BenchmarkRunner:
         preset,
         repeat=10,
         timeout=200.0,
+        precision=None,
         copy_output=True,
     ):
         self.bench = bench
@@ -525,6 +577,7 @@ class BenchmarkRunner:
                         impl_postfix,
                         preset,
                         repeat,
+                        precision,
                         _setup_func,
                         results_dict,
                         copy_output,
@@ -640,55 +693,24 @@ class Benchmark(object):
 
         return ref_impl
 
-    def _set_impl_to_framework_map(self, impl_fnlist) -> dict[str, Framework]:
+    def _set_impl_to_framework_map(self) -> dict[str, Framework]:
         """Create a dictionary mapping each implementation function name to a
         corresponding Framework object.
-
-        Args:
-            impl_fnlist : list of implementation functions
 
         Returns:
             Dict: Dictionary mapping implementation function to a Framework
         """
 
-        impl_to_fw_map = dict()
+        framework_map = build_framework_map()
 
-        for bimpl in impl_fnlist:
-            if "_numba" in bimpl.name and "_dpex" not in bimpl.name:
-                impl_to_fw_map.update({bimpl.name: NumbaFramework("numba")})
-            elif "_numpy" in bimpl.name:
-                impl_to_fw_map.update({bimpl.name: Framework("numpy")})
-            elif "_python" in bimpl.name:
-                impl_to_fw_map.update({bimpl.name: Framework("python")})
-            elif "_dpex" in bimpl.name:
-                try:
-                    fw = NumbaDpexFramework("numba_dpex")
-                    impl_to_fw_map.update({bimpl.name: fw})
-                except Exception:
-                    logging.exception(
-                        "Framework could not be "
-                        + "created for numba_dpex due to:"
-                    )
-            elif "_sycl" in bimpl.name:
-                try:
-                    fw = DpcppFramework("dpcpp")
-                    impl_to_fw_map.update({bimpl.name: fw})
-                except Exception:
-                    logging.exception(
-                        "Framework could not be created for dpcpp due to:"
-                    )
-            elif "_dpnp" in bimpl.name:
-                try:
-                    fw = DpnpFramework("dpnp")
-                    impl_to_fw_map.update({bimpl.name: fw})
-                except Exception:
-                    logging.exception(
-                        "Framework could not be created for dpcpp due to:"
-                    )
+        return {
+            f"{self.info.module_name}_{impl.postfix}": framework_map[
+                impl.postfix
+            ]
+            for impl in self.info.implementations
+        }
 
-        return impl_to_fw_map
-
-    def _get_validation_data(self, preset):
+    def _get_validation_data(self, preset, precision):
         if preset in self.refdata.keys():
             return self.refdata[preset]
 
@@ -701,6 +723,7 @@ class Benchmark(object):
             impl_postfix=ref_impl_postfix,
             preset=preset,
             repeat=1,
+            precision=precision,
             copy_output=True,
         ).get_results()
 
@@ -714,8 +737,8 @@ class Benchmark(object):
             )
             return None
 
-    def _validate_results(self, preset, frmwrk, frmwrk_out):
-        ref_out = self._get_validation_data(preset)
+    def _validate_results(self, preset, frmwrk, frmwrk_out, precision):
+        ref_out = self._get_validation_data(preset, precision)
         if not ref_out:
             return False
         try:
@@ -766,7 +789,7 @@ class Benchmark(object):
 
         self.impl_fnlist = self._set_implementation_fn_list()
         self.ref_impl_fn = self._set_reference_implementation()
-        self.impl_to_fw_map = self._set_impl_to_framework_map(self.impl_fnlist)
+        self.impl_to_fw_map = self._set_impl_to_framework_map()
 
     def get_impl_fnlist(self) -> list[BenchmarkImplFn]:
         """Returns a list of function objects each for a single implementation
@@ -829,9 +852,92 @@ class Benchmark(object):
             )
             return None
 
-    def get_data(self, preset: str = "L") -> Dict[str, Any]:
+    def _enforce_precision(
+        self, arg_name: str, arg: Any, precision: str, framework: Framework
+    ) -> Any:
+        """Enforce selected precision on data.
+
+        Args:
+           arg_name: Name of data argument.
+           arg: Input data argument whose precision is changed.
+           precision: The precsion used for input data argument..
+           framework: A Framework for which the data is initilized.
+
+        Returns: Copy of Input data with precision updated or
+                 the original input data.
+        """
+
+        if framework.is_array_type(arg):
+            for _type, _precision_strings in cfg.GLOBAL.dtypes.items():
+                if framework.is_type_fn()(arg, _type):
+                    precision_fn = framework.change_precision_fn(arg)
+                    dtype_obj = framework.dtype_obj()(
+                        _precision_strings[precision]
+                    )
+                    return precision_fn(dtype_obj)
+
+        logging.warning(
+            "Precision unchanged for " + arg_name + " due to unsupported type."
+        )
+        return arg
+
+    def _get_types_dict(
+        self, framework: Framework, global_precision: str, config_precision: str
+    ) -> dict[str, Any]:
+        """Constructs a dictionary of types with selected precision.
+
+        Args:
+           framework: A Framework for which the data is initialized.
+           global_precision: The precsion specified through runner.
+           config_precision: The precision specified through config.
+
+        Returns: Dictionary with types as str as key
+                 and type object as value.
+        """
+
+        # if types_dict_name is provided, precision must be specified
+        # either globally or in config file
+        precision = (
+            global_precision
+            if global_precision is not None
+            else config_precision
+        )
+
+        if precision is None or precision == "":
+            raise ValueError(
+                "Precision info unavailable. "
+                "Types dict requires precision info either "
+                "through config file or as arg to run_benchmark/s"
+            )
+
+        types_dict = dict()
+        for _type, _precision_strings in cfg.GLOBAL.dtypes.items():
+            try:
+                types_dict[_type] = framework.dtype_obj()(
+                    _precision_strings[precision]
+                )
+            except KeyError:
+                raise KeyError(
+                    "Precision "
+                    + precision
+                    + " not supported for "
+                    + self.bname
+                )
+
+        return types_dict
+
+    def get_data(
+        self, preset: str, framework: Framework, global_precision: str
+    ) -> Dict[str, Any]:
         """Initializes the benchmark data.
-        :param preset: The data-size preset (S, M, L, paper).
+
+        Args:
+           preset: The data-size preset (S, M, L).
+           framework: A Framework for which the data is initialized.
+           global_precision: The precision to use for benchmark data.
+
+        Returns: Dictionary with benchmark inputs as key
+                 and initialized data as value.
         """
 
         # 0. Skip if preset is already loaded
@@ -853,43 +959,88 @@ class Benchmark(object):
         for k, v in parameters.items():
             data[k] = v
 
+        # 4. Store types of selected precision dict in "data" dict.
+        if self.info.init.types_dict_name != "":
+            data[self.info.init.types_dict_name] = self._get_types_dict(
+                framework, global_precision, self.info.init.precision
+            )
+
         if self.info.init:
-            # 4. Call the initialize_fn with the input args and store the results
-            #    in the "data" dict.
+            self.get_data_init(framework, global_precision, data)
 
-            init_input_args_list = self.info.init.input_args
-            init_input_args_val_list = []
-            for arg in init_input_args_list:
-                init_input_args_val_list.append(data[arg])
-
-            init_kws = dict(zip(init_input_args_list, init_input_args_val_list))
-            initialized_output = self.initialize_fn(**init_kws)
-
-            # 5. Store the initialized output in the "data" dict. Note that the
-            #    implementation depends on Python dicts being ordered. Thus, the
-            #    code will not work with Python older than 3.7.
-            if isinstance(initialized_output, tuple):
-                for idx, out in enumerate(self.info.init.output_args):
-                    data.update({out: initialized_output[idx]})
-            elif len(self.info.init.output_args) == 1:
-                out = self.info.init.output_args[0]
-                data.update({out: initialized_output})
-            else:
-                raise ValueError("Unsupported initialize output")
-
-        # 6. Update the benchmark data (self.bdata) with the generated data
+        # 8. Update the benchmark data (self.bdata) with the generated data
         #    for the provided preset.
         self.bdata[preset] = data
         return self.bdata[preset]
 
+    def get_data_init(
+        self,
+        framework: Framework,
+        global_precision: str,
+        data: str,
+    ):
+        """Population benchmark data with outputs from initialization function.
+
+        Args:
+           preset: The data-size preset (S, M, L).
+           framework: A Framework for which the data is initialized.
+           global_precision: The precision to use for benchmark data.
+           data: Dictionary to put data into.
+
+        Returns: Dictionary with benchmark inputs as key
+                 and initialized data as value.
+        """
+        # 5. Call the initialize_fn with the input args and store the results
+        #    in the "data" dict.
+
+        init_input_args_list = self.info.init.input_args
+        init_input_args_val_list = []
+        for arg in init_input_args_list:
+            init_input_args_val_list.append(data[arg])
+
+        init_kws = dict(zip(init_input_args_list, init_input_args_val_list))
+        initialized_output = self.initialize_fn(**init_kws)
+
+        # 6. Store the initialized output in the "data" dict. Note that the
+        #    implementation depends on Python dicts being ordered. Thus, the
+        #    code will not work with Python older than 3.7.
+        if isinstance(initialized_output, tuple):
+            for idx, out in enumerate(self.info.init.output_args):
+                data.update({out: initialized_output[idx]})
+        elif len(self.info.init.output_args) == 1:
+            out = self.info.init.output_args[0]
+            data.update({out: initialized_output})
+        else:
+            raise ValueError("Unsupported initialize output")
+
+        # 7. If global precision or precision through config is set
+        #   enforce precision on all initialized arguments.
+        if self.info.init.types_dict_name == "" and (
+            global_precision is not None or self.info.init.precision != ""
+        ):
+            enforce_pres = (
+                global_precision
+                if global_precision is not None
+                else self.info.init.precision
+            )
+            for out in self.info.init.output_args:
+                data.update(
+                    {
+                        out: self._enforce_precision(
+                            out, data[out], enforce_pres, framework
+                        )
+                    }
+                )
+
     def run(
         self,
-        conn: sqlite3.Connection = None,
         implementation_postfix: str = None,
         preset: str = "S",
         repeat: int = 10,
         validate: bool = True,
         timeout: float = 200.0,
+        precision: str = None,
+        conn: sqlite3.Connection = None,
         run_id: int = None,
     ) -> list[BenchmarkResults]:
         results: list[BenchmarkResults] = []
@@ -915,12 +1066,13 @@ class Benchmark(object):
                 preset=preset,
                 repeat=repeat,
                 timeout=timeout,
+                precision=precision,
                 copy_output=validate,
             )
             result = runner.get_results()
             if validate and result.error_state == ErrorCodes.SUCCESS:
                 if self._validate_results(
-                    preset, result.framework, result.results
+                    preset, result.framework, result.results, precision
                 ):
                     result.validation_state = ValidationStatusCodes.SUCCESS
                 else:

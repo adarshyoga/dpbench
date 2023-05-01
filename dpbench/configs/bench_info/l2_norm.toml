@@ -21,6 +21,7 @@ array_args = [
 output_args = [
     "d",
 ]
+expected_failure_implementations = ["dpnp", "numba_dpex_n"]
 
 [benchmark.parameters.S]
 npoints = 32768
@@ -39,10 +40,13 @@ seed = 777777
 
 [benchmark.init]
 func_name = "initialize"
+types_dict_name="types_dict"
+precision="double"
 input_args = [
     "npoints",
     "dims",
     "seed",
+    "types_dict",
 ]
 output_args = [
     "a",
