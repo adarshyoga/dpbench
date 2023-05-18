@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![pre-commit](https://github.com/IntelPython/dpbench/actions/workflows/pre-commit.yml/badge.svg)](https://github.com/IntelPython/dpbench/actions/workflows/pre-commit.yml)
 
-# DPBench - Benchmarks to evaluate Data-parallel Extensions for Python
+# DPBench - Benchmarks to evaluate Data-Parallel Extensions for Python
 
 * __*_numba_*.py__ : This file contains Numba implementations of the benchmarks. There are three modes: nopython-mode, nopython-mode-parallel and nopython-mode-parallel-range.
 * __*_numba_dpex_*.py__ : This file contains Numba-Dpex implementations of the benchmarks. There are three modes: kernel-mode, numpy-mode and prange-mode.
@@ -35,11 +35,11 @@ SPDX-License-Identifier: Apache-2.0
         ```
     - To run, taking black_scholes for example:
         ```bash
-        $  python -c "import dpbench; dpbench.run_benchmark(\"black_scholes\")" 2> /dev/null
+        $  dpbench -b black_scholes run
         ```
     - Similarly, to run all the cases in DPBench:
         ```bash
-        $  python -c "import dpbench; dpbench.run_benchmarks()" 2> /dev/null
+        $  dpbench -a run
         ```
 
 3. Device Customization
@@ -68,9 +68,41 @@ SPDX-License-Identifier: Apache-2.0
 
     > **_NOTE:_**  The `arch` option is deprecated and not used by dpbench.
 
-   To run with custimized framework JSON file, pass it as an argument to the `run_benchmark` or
+   To run with customized framework JSON file, pass it as an argument to the `run_benchmark` or
    `run_benchmarks` functions.
+
+   TODO: current way not working anymore.
 
     ```bash
     $ python -c "import dpbench; dpbench.run_benchmark(\"black_scholes\", "<absolute path to json file>")"
     ```
+
+## Running numba-mlir benchmarks
+1. Setting up conda environment and installing dependencies:
+
+    Use same instructions as for usual dpbench setup.
+
+    Install latest `numba-mlir` dev package:
+
+        $ conda install numba-mlir -c dppy/label/dev -c intel
+
+2. Build and run DPBench
+
+    Use same commands to setup and run dpbench:
+
+        ```bash
+        $  dpbench -b black_scholes run
+        ```
+
+    or, to run specific version:
+
+
+        ```bash
+        $  dpbench -b black_scholes -i numba_mlir_k run
+        ```
+
+    to run all `numba-mlir` benchmarks:
+
+        ```bash
+        $  dpbench -b black_scholes -i numba_mlir_k,numba_mlir_n,numba_mlir_p run
+        ```

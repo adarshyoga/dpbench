@@ -19,10 +19,16 @@ from .framework import Framework
 from .implementation_postfix import Implementation
 from .module import Module
 
+_REFERENCE_IMPLEMENTATIONS = {"numpy", "python"}
+
 
 def read_configs(  # noqa: C901: TODO: move modules into config
-    benchmarks: list[str] = None,
-    implementations: list[str] = None,
+    benchmarks: set[str] = None,
+    implementations: set[str] = None,
+    no_dpbench: bool = False,
+    with_npbench: bool = False,
+    with_polybench: bool = False,
+    load_implementations: bool = True,
 ) -> Config:
     """Read all configuration files and populate those settings into Config.
 
@@ -53,11 +59,9 @@ def read_configs(  # noqa: C901: TODO: move modules into config
         ),
     ]
 
-    no_dpbench = os.getenv("NO_DPBENCH")
     if no_dpbench:
         modules[0].benchmark_configs_path = ""
 
-    with_npbench = os.getenv("WITH_NPBENCH")
     if with_npbench:
         modules.append(
             Module(
@@ -69,7 +73,6 @@ def read_configs(  # noqa: C901: TODO: move modules into config
             )
         )
 
-    with_polybench = os.getenv("WITH_POLYBENCH")
     if with_polybench:
         modules.append(
             Module(
@@ -92,7 +95,7 @@ def read_configs(  # noqa: C901: TODO: move modules into config
                 benchmarks=benchmarks,
             )
         if mod.framework_configs_path != "":
-            read_frameworks(config, mod.framework_configs_path)
+            read_frameworks(config, mod.framework_configs_path, implementations)
         if mod.precision_dtypes_path != "":
             read_precision_dtypes(config, mod.precision_dtypes_path)
         if mod.path != "":
@@ -102,13 +105,20 @@ def read_configs(  # noqa: C901: TODO: move modules into config
         config.implementations += framework.postfixes
 
     if implementations is None:
-        implementations = [impl.postfix for impl in config.implementations]
+        implementations = {impl.postfix for impl in config.implementations}
 
-    for benchmark in config.benchmarks:
-        read_benchmark_implementations(
-            benchmark,
-            implementations,
-        )
+    if load_implementations:
+        for benchmark in config.benchmarks:
+            read_benchmark_implementations(
+                benchmark,
+                implementations,
+            )
+
+        config.benchmarks = [
+            benchmark
+            for benchmark in config.benchmarks
+            if len(benchmark.implementations) > 0
+        ]
 
     return config
 
@@ -118,7 +128,7 @@ def read_benchmarks(
     bench_info_dir: str,
     recursive: bool = False,
     parent_package: str = "dpbench.benchmarks",
-    benchmarks: list[str] = None,
+    benchmarks: set[str] = None,
 ):
     """Read and populate benchmark configuration files.
 
@@ -163,12 +173,20 @@ def read_benchmarks(
         config.benchmarks.append(benchmark)
 
 
-def read_frameworks(config: Config, framework_info_dir: str) -> None:
+def read_frameworks(
+    config: Config,
+    framework_info_dir: str,
+    implementations: set[str] = None,
+) -> None:
     """Read and populate framework configuration files.
 
     Args:
         config: Configuration object where settings should be populated.
         framework_info_dir: Path to the directory with configuration files.
+        implementations: Set of the implementations to load. If framework
+            does not have any implementation from this list - it won't be
+            loaded. If set None or empty - all frameworks/implementations get
+            loaded.
     """
     for framework_info_file in os.listdir(framework_info_dir):
         if not framework_info_file.endswith(".toml"):
@@ -183,27 +201,21 @@ def read_frameworks(config: Config, framework_info_dir: str) -> None:
 
         framework_info = tomli.loads(file_contents)
         framework_dict = framework_info.get("framework")
-        if framework_dict:
-            framework = Framework.from_dict(framework_dict)
-            config.frameworks.append(framework)
+        if not framework_dict:
+            continue
+        framework = Framework.from_dict(framework_dict)
+        if implementations:
+            framework.postfixes = [
+                postfix
+                for postfix in framework.postfixes
+                if postfix.postfix in implementations
+                or postfix.postfix in _REFERENCE_IMPLEMENTATIONS
+            ]
 
+        if len(framework.postfixes) == 0:
+            continue
 
-def read_implementation_postfixes(
-    config: Config, impl_postfix_file: str
-) -> None:
-    """Read and populate implementation postfix configuration file.
-
-    Args:
-        config: Configuration object where settings should be populated.
-        impl_postfix_file: Path to the configuration file.
-    """
-    with open(impl_postfix_file) as file:
-        file_contents = file.read()
-
-    implementation_postfixes = tomli.loads(file_contents)
-    for impl in implementation_postfixes["implementations"]:
-        implementation = Implementation.from_dict(impl)
-        config.implementations.append(implementation)
+        config.frameworks.append(framework)
 
 
 def read_precision_dtypes(config: Config, precision_dtypes_file: str) -> None:
@@ -249,8 +261,8 @@ def setup_init(config: Benchmark, modules: list[str]) -> None:
         impl_mod = importlib.import_module(config.init.package_path)
 
         if not hasattr(impl_mod, config.init.func_name):
-            print(
-                f"WARNING: could not find init function for {config.module_name}"
+            logging.warn(
+                f"could not find init function for {config.module_name}"
             )
 
 
@@ -284,7 +296,7 @@ def discover_module_name_and_postfix(module: str, config: Config):
 
 def read_benchmark_implementations(
     config: Benchmark,
-    implementations: list[str] = None,
+    implementations: set[str] = None,
 ) -> None:
     """Read and discover implementation modules and functions.
 
@@ -314,12 +326,16 @@ def read_benchmark_implementations(
     ]
 
     setup_init(config, modules)
+    set_default_reference_implementation_postfix(config, modules)
 
     for module in modules:
         module_name, postfix = discover_module_name_and_postfix(module, config)
 
-        if (postfix not in implementations) or (
-            config.init and config.init.module_name.endswith(module_name)
+        if (
+            implementations
+            and (postfix not in implementations)
+            and (postfix != config.reference_implementation_postfix)
+            or (config.init and config.init.module_name.endswith(module_name))
         ):
             continue
 
@@ -351,6 +367,34 @@ def read_benchmark_implementations(
                 package_path=package_path,
             )
         )
+
+
+def set_default_reference_implementation_postfix(
+    config: Benchmark,
+    modules: set[str] = None,
+):
+    """Sets reference implementation postfix if not set.
+
+    It will set it to 'numpy' or 'python' with priority to 'numpy' depending on
+    the available modules.
+
+    Args:
+        config: Benchmark configuration object where settings should be
+            populated.
+        modules: List of modules in benchmark implementation dir.
+    """
+    if config.reference_implementation_postfix:
+        return
+
+    postfixes = {
+        discover_module_name_and_postfix(module, config)[1]
+        for module in modules
+    }
+
+    for postfix in _REFERENCE_IMPLEMENTATIONS:
+        if postfix in postfixes:
+            config.reference_implementation_postfix = postfix
+            break
 
 
 def get_benchmark_index(configs: list[Benchmark], module_name: str) -> int:

@@ -2,7 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from .benchmark import Benchmark, BenchmarkResults
+from .benchmark import Benchmark
+from .benchmark_results import BenchmarkResults
 from .datamodel import (
     Base,
     Result,
@@ -18,13 +19,14 @@ from .frameworks import (
     Framework,
     NumbaDpexFramework,
     NumbaFramework,
+    NumbaMlirFramework,
 )
 from .reporter import (
+    generate_comparison_report,
     generate_impl_summary_report,
     generate_performance_report,
     get_unexpected_failures,
 )
-from .utilities import validate
 
 __all__ = [
     "Base",
@@ -35,6 +37,7 @@ __all__ = [
     "Framework",
     "NumbaFramework",
     "NumbaDpexFramework",
+    "NumbaMlirFramework",
     "DpnpFramework",
     "DpcppFramework",
     "create_connection",
@@ -43,6 +46,6 @@ __all__ = [
     "store_results",
     "generate_impl_summary_report",
     "generate_performance_report",
+    "generate_comparison_report",
     "get_unexpected_failures",
-    "validate",
 ]

@@ -9,6 +9,7 @@ from a specific benchmark run.
 """
 
 import dataclasses
+import logging
 import pathlib
 from typing import Final, Union
 
@@ -24,6 +25,7 @@ from . import datamodel as dm
 __all__ = [
     "generate_impl_summary_report",
     "generate_performance_report",
+    "generate_comparison_report",
 ]
 
 
@@ -42,9 +44,7 @@ def update_run_id(conn: sqlalchemy.Engine, run_id: Union[int, None]) -> int:
             .scalar()
         )
 
-        print(
-            f"WARNING: run_id was not provided, using the latest one {run_id}"
-        )
+        logging.warn(f"using the latest run_id {run_id}")
 
         return run_id
 
@@ -103,13 +103,11 @@ def generate_summary(data: pd.DataFrame):
 
 
 def generate_impl_summary_report(
-    results_db: Union[str, sqlalchemy.Engine] = "results.db",
-    run_id: int = None,
-    implementations: list[str] = None,
+    conn: sqlalchemy.Engine,
+    run_id: int,
+    implementations: list[str],
 ):
     """generate implementation summary report with status of each benchmark"""
-    conn = update_connection(results_db=results_db)
-    run_id = update_run_id(conn, run_id)
     legends = read_legends()
 
     generate_header(conn, run_id)
@@ -120,9 +118,6 @@ def generate_impl_summary_report(
         dm.Result.benchmark,
         dm.Result.problem_preset,
     ]
-
-    if implementations is None:
-        implementations = [impl.postfix for impl in cfg.GLOBAL.implementations]
 
     for impl in implementations:
         columns.append(
@@ -159,14 +154,12 @@ def generate_impl_summary_report(
 
 
 def generate_performance_report(
-    results_db: Union[str, sqlalchemy.Engine] = "results.db",
-    run_id: int = None,
-    implementations: list[str] = None,
+    conn: sqlalchemy.Engine,
+    run_id: int,
+    implementations: list[str],
     headless=False,
 ):
     """generate performance report with median times for each benchmark"""
-    conn = update_connection(results_db=results_db)
-    run_id = update_run_id(conn, run_id)
     legends = read_legends()
 
     if not headless:
@@ -178,9 +171,6 @@ def generate_performance_report(
         dm.Result.benchmark,
         dm.Result.problem_preset,
     ]
-
-    if implementations is None:
-        implementations = [impl.postfix for impl in cfg.GLOBAL.implementations]
 
     for impl in implementations:
         columns.append(
@@ -227,6 +217,74 @@ def generate_performance_report(
     generate_summary(df)
 
 
+def generate_comparison_report(
+    conn: sqlalchemy.Engine,
+    run_id: int,
+    implementations: list[str],
+    comparison_pairs: list[tuple[str, str]],
+    headless=False,
+):
+    """generate comparison report with median times for each benchmark"""
+    if len(comparison_pairs) == 0:
+        return
+
+    legends = read_legends()
+
+    if not headless:
+        generate_header(conn, run_id)
+        generate_legend(legends)
+
+    columns = [
+        dm.Result.input_size_human.label("input_size"),
+        dm.Result.benchmark,
+        dm.Result.problem_preset,
+    ]
+
+    for impl in implementations:
+        columns.append(
+            func.ifnull(
+                func.max(
+                    case(
+                        (
+                            dm.Result.implementation == impl,
+                            dm.Result.median_exec_time,
+                        ),
+                    )
+                ),
+                None,
+            ).label(impl),
+        )
+
+    sql = (
+        sqlalchemy.select(*columns)
+        .group_by(
+            dm.Result.benchmark,
+            dm.Result.problem_preset,
+        )
+        .where(dm.Result.run_id == run_id)
+    )
+
+    df = pd.read_sql_query(
+        sql=sql,
+        con=conn.connect(),
+    )
+
+    for index, row in df.iterrows():
+        for target, reference in comparison_pairs:
+            if row[reference] == 0 or row[target] == 0:
+                boost = "n/a"
+            else:
+                boost = (
+                    str(round((row[target] / row[reference]) * 100, 2)) + "%"
+                )
+            df.at[index, target + "_to_" + reference] = boost
+
+    for impl in implementations:
+        df = df.drop(impl, axis=1)
+
+    generate_summary(df)
+
+
 def get_failures_from_results(
     results_db: Union[str, sqlalchemy.Engine] = "results.db",
     run_id: int = None,
@@ -260,5 +318,11 @@ def get_unexpected_failures(
     }
 
     failures = {f for f in get_failures_from_results(results_db, run_id)}
+
+    fixed_failures = expected_failures.difference(failures)
+    if len(fixed_failures):
+        logging.warn(
+            f"these benchmarks does not fail anymore: {fixed_failures}"
+        )
 
     return failures.difference(expected_failures)
