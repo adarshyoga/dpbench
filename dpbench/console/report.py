@@ -45,8 +45,7 @@ def execute_report(args: Namespace, conn: sqlalchemy.Engine):
         )
 
     import dpbench.config as cfg
-    from dpbench.infrastructure.reporter import update_run_id
-    from dpbench.infrastructure.runner import print_report
+    from dpbench.infrastructure.reporter import print_report, update_run_id
 
     cfg.GLOBAL = cfg.read_configs(
         benchmarks=args.benchmarks,
@@ -63,6 +62,5 @@ def execute_report(args: Namespace, conn: sqlalchemy.Engine):
     print_report(
         conn=conn,
         run_id=args.run_id,
-        implementations=args.implementations,
         comparison_pairs=comparison_pairs,
     )

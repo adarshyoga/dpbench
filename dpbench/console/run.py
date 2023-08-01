@@ -12,6 +12,8 @@ import sqlalchemy
 import dpbench.config as cfg
 import dpbench.infrastructure as dpbi
 from dpbench.infrastructure.benchmark_runner import BenchmarkRunner, RunConfig
+from dpbench.infrastructure.datamodel import Postfix, store_postfix
+from dpbench.infrastructure.frameworks.fabric import build_framework
 
 from ._namespace import Namespace
 
@@ -25,7 +27,7 @@ def add_run_arguments(parser: argparse.ArgumentParser):
     parser.add_argument(
         "-p",
         "--preset",
-        choices=["S", "M", "L"],
+        choices=["S", "M16Gb", "M", "L"],
         type=str,
         nargs="?",
         default="S",
@@ -136,9 +138,9 @@ def execute_run(args: Namespace, conn: sqlalchemy.Engine):
     )
 
     if args.all_implementations:
-        args.implementations = {
+        args.implementations = [
             impl.postfix for impl in cfg.GLOBAL.implementations
-        }
+        ]
 
     if args.sycl_device:
         for framework in cfg.GLOBAL.frameworks:
@@ -148,6 +150,30 @@ def execute_run(args: Namespace, conn: sqlalchemy.Engine):
         args.run_id = dpbi.create_run(conn)
 
     runner = BenchmarkRunner()
+
+    implementation_descriptions = {
+        impl.postfix: impl.description for impl in cfg.GLOBAL.implementations
+    }
+    for implementation in args.implementations:
+        framework_config = _find_framework_config(implementation)
+
+        if not framework_config:
+            logging.error(
+                f"Could not find framework for {implementation} implementation"
+            )
+            continue
+
+        framework = build_framework(framework_config)
+
+        store_postfix(
+            conn=conn,
+            postfix=Postfix(
+                run_id=args.run_id,
+                postfix=implementation,
+                description=implementation_descriptions[implementation],
+                device=framework.device_info,
+            ),
+        )
 
     for benchmark in cfg.GLOBAL.benchmarks:
         print("")
@@ -160,9 +186,6 @@ def execute_run(args: Namespace, conn: sqlalchemy.Engine):
             framework = _find_framework_config(implementation)
 
             if not framework:
-                logging.error(
-                    f"Could not find framework for {implementation} implementation"
-                )
                 continue
 
             logging.info(

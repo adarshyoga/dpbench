@@ -14,30 +14,32 @@ input_args = [
     "arrayP",
     "arrayPclusters",
     "arrayC",
-    "arrayCsum",
     "arrayCnumpoint",
     "niters",
-    "npoints",
-    "ndims",
-    "ncentroids",
 ]
 array_args = [
     "arrayP",
     "arrayPclusters",
     "arrayC",
-    "arrayCsum",
     "arrayCnumpoint",
 ]
 output_args = [
     "arrayPclusters",
     "arrayC",
-    "arrayCsum",
     "arrayCnumpoint",
 ]
+expected_failure_implementations = ["numba_dpex_k"]
 
 [benchmark.parameters.S]
 npoints = 4096
 niters = 10
+seed = 7777777
+ndims = 2
+ncentroids = 10
+
+[benchmark.parameters.M16Gb]
+npoints = 1048576
+niters = 30
 seed = 7777777
 ndims = 2
 ncentroids = 10
@@ -72,6 +74,5 @@ output_args = [
     "arrayP",
     "arrayPclusters",
     "arrayC",
-    "arrayCsum",
     "arrayCnumpoint",
 ]

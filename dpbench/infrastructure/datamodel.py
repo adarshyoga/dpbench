@@ -112,6 +112,17 @@ class Result(Base):
     )
 
 
+class Postfix(Base):
+    __tablename__ = "postfixes"
+
+    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"))
+    postfix: Mapped[str]
+    description: Mapped[str]
+    device: Mapped[str]
+
+    __table_args__ = (UniqueConstraint("run_id", "postfix"),)
+
+
 def create_connection(db_file) -> Engine:
     """create a database connection to the SQLite database
         specified by db_file
@@ -152,7 +163,7 @@ def create_results_table(db_file: str):
     """
 
     absolute_path = os.path.dirname(__file__)
-    relative_path = "../../alembic.ini"
+    relative_path = "../migrations/alembic.ini"
     full_path = os.path.join(absolute_path, relative_path)
 
     alembic_cfg = Config(full_path)
@@ -164,9 +175,20 @@ def create_results_table(db_file: str):
 def store_results(conn: Engine, result: Result):
     """creates result record in database.
     :param conn: sqlalchemy engine
-    :param result: result resord to be inserted into db
+    :param result: result record to be inserted into db
     :return:
     """
     with Session(conn) as session:
         session.add(result)
+        session.commit()
+
+
+def store_postfix(conn: Engine, postfix: Postfix):
+    """creates postfix record in database.
+    :param conn: sqlalchemy engine
+    :param postfix: postfix record to be inserted into db
+    :return:
+    """
+    with Session(conn) as session:
+        session.add(postfix)
         session.commit()
