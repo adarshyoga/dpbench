@@ -4,9 +4,15 @@
 
 package:
   name: dpbench
-  version: 0.1
+  version: {{ GIT_DESCRIBE_TAG }}
+
 source:
   path: ..
+
+build:
+    number: {{ GIT_DESCRIBE_NUMBER }}
+    script_env:
+        - WHEELS_OUTPUT_FOLDER
 
 requirements:
   build:
@@ -16,20 +22,13 @@ requirements:
   host:
     - python
     - setuptools
-    - cmake
-    - ninja
-    - wheel
+    - cmake==3.26* # [win]
+    - cmake # [not win]
+    - ninja # [not win]
     - scikit-build
     - cython
     - pybind11
-    # runtime requirements, cause conda tries to install after build
-    # - tomli
-    # - alembic
-    # - sqlalchemy
-    # - py-cpuinfo
-    # - scipy
-    # - scikit-learn
-    # - pandas
+    - versioneer
     - intel::numpy
     - numba
     - dpctl
@@ -40,18 +39,15 @@ requirements:
     - tomli
     - alembic
     - sqlalchemy
-    # - py-cpuinfo
+    - py-cpuinfo
     - scipy
     - scikit-learn
     - pandas
-    - numpy
+    - intel::numpy
     - numba
     - dpctl
     - dpnp
     - numba-dpex
-
-build:
-  number: 0
 
 test:
   requires:
@@ -60,10 +56,6 @@ test:
     - numba-dpex
     - numba
     - numpy
-  imports:
-    - dpbench
-  commands:
-    - python -c "import dpbench"
 
 about:
   home: https://github.com/IntelPython/dpbench

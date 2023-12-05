@@ -8,16 +8,19 @@ on:
   push:
     branches:
       - main
+    tags:
+      - '[0-9]+.[0-9]+*'
   pull_request:
 
 env:
   PACKAGE_NAME: dpbench
   MODULE_NAME: dpbench
   # There is a separate action that removes defaults.
-  CHANNELS: 'dppy/label/dev,conda-forge,intel'
+  CHANNELS: 'dppy/label/dev,conda-forge,intel,nodefaults'
   VER_JSON_NAME: 'version.json'
   VER_SCRIPT1: "import json; f = open('version.json', 'r'); j = json.load(f); f.close(); "
   VER_SCRIPT2: "d = j['dpbench'][0]; print('='.join((d[s] for s in ('version', 'build'))))"
+  PYTHONIOENCODING: 'utf-8'
 
 jobs:
   build:
@@ -26,14 +29,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.9', '3.10']
+        python: ['3.9', '3.10', '3.11']
         os: [ubuntu-latest, windows-latest]
 
     runs-on: ${{ matrix.os }}
 
     defaults:
       run:
-        shell: bash -l {0}
+        shell: ${{ matrix.os == 'windows-latest' && 'cmd /U /C CALL {0}' || 'bash -el {0}' }}
 
     continue-on-error: false
 
@@ -63,11 +66,20 @@ jobs:
         run: conda config --remove channels defaults
 
       - name: Store conda paths as envs
-        run: echo "CONDA_BLD=$CONDA_PREFIX/conda-bld/${{ runner.os == 'Linux' && 'linux' || 'win' }}-64/" | tr "\\" '/' >> $GITHUB_ENV
+        shell: bash -l {0}
+        run: |
+          echo "CONDA_BLD=$CONDA_PREFIX/conda-bld/${{ runner.os == 'Linux' && 'linux' || 'win' }}-64/" | tr "\\" '/' >> $GITHUB_ENV
+          echo "WHEELS_OUTPUT_FOLDER=$GITHUB_WORKSPACE${{ runner.os == 'Linux' && '/' || '\\' }}" >> $GITHUB_ENV
 
       # boa is an extention to conda so we can use mamba resolver in conda build
       - name: Install conda-build
         run: mamba install boa
+
+      - name: Configure MSBuild
+        if: runner.os == 'Windows'
+        uses: microsoft/setup-msbuild@v1.1
+        with:
+          vs-version: '14.35'
 
       - name: Build conda package
         run: conda mambabuild --no-test --python ${{ matrix.python }} conda-recipe
@@ -78,6 +90,12 @@ jobs:
           name: ${{ env.PACKAGE_NAME }} ${{ runner.os }} Python ${{ matrix.python }}
           path: ${{ env.CONDA_BLD }}${{ env.PACKAGE_NAME }}-*.tar.bz2
 
+      - name: Upload wheels artifact
+        uses: actions/upload-artifact@v3.1.2
+        with:
+          name: ${{ env.PACKAGE_NAME }} ${{ runner.os }} Wheels Python ${{ matrix.python }}
+          path: ${{ env.WHEELS_OUTPUT_FOLDER }}${{ env.PACKAGE_NAME }}-*.whl
+
   test:
     name: Test ['${{ matrix.os }}', python='${{ matrix.python }}']
 
@@ -87,13 +105,14 @@ jobs:
 
     defaults:
       run:
-        shell: ${{ matrix.os == 'windows-latest' && 'cmd /C CALL {0}' || 'bash -l {0}' }}
+        shell: ${{ matrix.os == 'windows-latest' && 'cmd /U /C CALL {0}' || 'bash -el {0}' }}
 
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.9', '3.10']
+        python: ['3.9', '3.10', '3.11']
         os: [ubuntu-20.04, ubuntu-latest, windows-latest]
+        precision: ["single", "double"]
         experimental: [false]
 
     continue-on-error: ${{ matrix.experimental }}
@@ -148,7 +167,15 @@ jobs:
           cat ${{ env.VER_JSON_PATH }}
 
       - name: Install dpbench
-        run: mamba install ${{ env.PACKAGE_NAME }}=${{ env.PACKAGE_VERSION }} pytest opencl_rt python=${{ matrix.python }} -c ${{ env.CHANNEL_PATH }}
+        run: mamba install ${{ env.PACKAGE_NAME }}=${{ env.PACKAGE_VERSION }} pytest intel::intel-opencl-rt python=${{ matrix.python }} -c ${{ env.CHANNEL_PATH }}
+
+      - name: Setup OpenCL CPU device
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $script_path="$env:CONDA_PREFIX\Scripts\set-intel-ocl-icd-registry.ps1"
+          &$script_path
+          echo "OCL_ICD_FILENAMES=$env:CONDA_PREFIX\Library\lib\intelocl64.dll" >> $env:GITHUB_ENV
 
       - name: List installed packages
         run: conda list
@@ -156,10 +183,22 @@ jobs:
       - name: Smoke test
         run: python -c "import dpnp, dpctl, dpbench; dpctl.lsplatform()"
 
-      - name: Run benchmakrs
+      - name: Run benchmarks
         run: |
           dpbench -i numpy,numba_dpex_p,dpnp,numba_n,sycl run
+
+      - name: Generate report
+        run: |
           dpbench report
+
+      # we want to make sure that configuration files are geting populated
+      - name: Run npbench benchmark
+        run: |
+          dpbench -i numpy -b azimint_hist run --npbench --precision=${{matrix.precision}}
+
+      - name: Run rodinia benchmark
+        run: |
+          dpbench run --rodinia --no-dpbench --no-validate -r 1 --precision=${{matrix.precision}}
 
   upload_anaconda:
     name: Upload dppy/label/dev ['${{ matrix.os }}', python='${{ matrix.python }}']
@@ -168,14 +207,14 @@ jobs:
 
     strategy:
       matrix:
-        python: ['3.9', '3.10']
+        python: ['3.9', '3.10', '3.11']
         os: [ubuntu-latest, windows-latest]
 
     runs-on: ${{ matrix.os }}
 
     defaults:
       run:
-        shell: bash -l {0}
+        shell: bash -el {0}
 
     continue-on-error: false
 
@@ -189,6 +228,11 @@ jobs:
         with:
           name: ${{ env.PACKAGE_NAME }} ${{ runner.os }} Python ${{ matrix.python }}
 
+      - name: Download wheels artifact
+        uses: actions/download-artifact@v3.0.2
+        with:
+          name: ${{ env.PACKAGE_NAME }} ${{ runner.os }} Wheels Python ${{ matrix.python }}
+
       - name: Setup miniconda
         uses: conda-incubator/setup-miniconda@v2.2.0
         with:
@@ -200,7 +244,45 @@ jobs:
       - name: Install anaconda-client
         run: conda install anaconda-client
 
+      - name: Package version
+        run: echo "PACKAGE_VERSION=$(basename ${{ env.PACKAGE_NAME }}-*.tar.bz2 | sed 's/^${{ env.PACKAGE_NAME }}-\([^-]*\).*/\1/')" >> $GITHUB_ENV
+
       - name: Upload
         run: anaconda --token ${{ env.ANACONDA_TOKEN }} upload --user dppy --label dev ${{ env.PACKAGE_NAME }}-*.tar.bz2
         env:
           ANACONDA_TOKEN: ${{ secrets.ANACONDA_TOKEN }}
+
+      - name: Upload Wheels
+        run: anaconda --token ${{ env.ANACONDA_TOKEN }} upload --user dppy --label dev ${{ env.PACKAGE_NAME }}-*.whl --version ${{ env.PACKAGE_VERSION }}
+        env:
+          ANACONDA_TOKEN: ${{ secrets.ANACONDA_TOKEN }}
+
+  cleanup_packages:
+    name: Clean up anaconda packages
+    needs: [upload_anaconda]
+    runs-on: 'ubuntu-latest'
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: conda-incubator/setup-miniconda@v2
+        with:
+          run-post: false
+          channel-priority: "disabled"
+          channels: conda-forge
+          python-version: '3.11'
+
+      - name: Install anaconda-client
+        run: conda install anaconda-client
+
+      - name: Checkout repo
+        uses: actions/checkout@v2
+        with:
+          repository: IntelPython/devops-tools
+          fetch-depth: 0
+
+      - name: Cleanup old packages
+        run: |
+          python scripts/cleanup-old-packages.py \
+          --verbose --force --token ${{ secrets.ANACONDA_TOKEN }} \
+          --package dppy/${{ env.PACKAGE_NAME }} --label dev
