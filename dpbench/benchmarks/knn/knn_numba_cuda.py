@@ -2,13 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from math import sqrt
+from math import ceil, sqrt
 
-import numba_dpex as dpex
-import numpy as np
+import cupy as cp
+from numba import cuda
 
 
-@dpex.kernel
+@cuda.jit
 def _knn_kernel(  # noqa: C901: TODO: can we simplify logic?
     train,
     train_labels,
@@ -21,9 +21,11 @@ def _knn_kernel(  # noqa: C901: TODO: can we simplify logic?
     data_dim,
 ):
     dtype = train.dtype
-    i = dpex.get_global_id(0)
+
+    i = cuda.grid(1)
+
     # here k has to be 5 in order to match with numpy
-    queue_neighbors = dpex.private.array(shape=(5, 2), dtype=dtype)
+    queue_neighbors = cuda.local.array(shape=(5, 2), dtype=dtype)
 
     for j in range(k):
         x1 = train[j]
@@ -106,7 +108,10 @@ def knn(
     votes_to_classes,
     data_dim,
 ):
-    _knn_kernel[dpex.Range(test_size)](
+    nthreads = 256
+    nblocks = ceil(test_size // nthreads)
+
+    _knn_kernel[nblocks, nthreads](
         x_train,
         y_train,
         x_test,

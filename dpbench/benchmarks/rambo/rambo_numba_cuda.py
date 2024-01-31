@@ -2,15 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from math import cos, log, pi, sin, sqrt
+from math import ceil, cos, log, pi, sin, sqrt
 
-import numba_dpex as dpex
+from numba import cuda
 
 
-@dpex.kernel
+@cuda.jit
 def _rambo(C1, F1, Q1, nout, output):
     dtype = C1.dtype
-    i = dpex.get_global_id(0)
+    i = cuda.grid(1)
     for j in range(nout):
         C = dtype.type(2.0) * C1[i, j] - dtype.type(1.0)
         S = sqrt(dtype.type(1) - C * C)
@@ -24,10 +24,21 @@ def _rambo(C1, F1, Q1, nout, output):
 
 
 def rambo(nevts, nout, C1, F1, Q1, output):
-    _rambo[dpex.Range(nevts)](
+    nthreads = 256
+    nblocks = ceil(nevts // nthreads)
+
+    _rambo[nblocks, nthreads](
         C1,
         F1,
         Q1,
         nout,
         output,
     )
+
+    # _rambo[nevts,](
+    #     C1,
+    #     F1,
+    #     Q1,
+    #     nout,
+    #     output,
+    # )

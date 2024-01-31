@@ -2,18 +2,18 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from math import erf, exp, log, sqrt
+from math import ceil, erf, exp, log, sqrt
 
-import numba_dpex as dpex
+from numba import cuda
 
 
-@dpex.kernel
+@cuda.jit
 def _black_scholes_kernel(nopt, price, strike, t, rate, volatility, call, put):
     dtype = price.dtype
     mr = -rate
     sig_sig_two = volatility * volatility * dtype.type(2)
 
-    i = dpex.get_global_id(0)
+    i = cuda.grid(1)
 
     P = price[i]
     S = strike[i]
@@ -40,6 +40,9 @@ def _black_scholes_kernel(nopt, price, strike, t, rate, volatility, call, put):
 
 
 def black_scholes(nopt, price, strike, t, rate, volatility, call, put):
-    _black_scholes_kernel[dpex.Range(nopt)](
+    nthreads = 256
+    nblocks = ceil(nopt // nthreads)
+
+    _black_scholes_kernel[nblocks, nthreads](
         nopt, price, strike, t, rate, volatility, call, put
     )
