@@ -19,7 +19,7 @@ env:
   PACKAGE_NAME: dpbench
   MODULE_NAME: dpbench
   # There is a separate action that removes defaults.
-  CHANNELS: 'dppy/label/dev,conda-forge,intel,nodefaults'
+  CHANNELS: 'dppy/label/dev,conda-forge,https://software.repos.intel.com/python/conda,nodefaults'
   VER_JSON_NAME: 'version.json'
   VER_SCRIPT1: "import json; f = open('version.json', 'r'); j = json.load(f); f.close(); "
   VER_SCRIPT2: "d = j['dpbench'][0]; print('='.join((d[s] for s in ('version', 'build'))))"
@@ -33,7 +33,7 @@ jobs:
       fail-fast: false
       matrix:
         python: ['3.9', '3.10', '3.11']
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-2019]
 
     runs-on: ${{ matrix.os }}
 
@@ -169,7 +169,7 @@ jobs:
           cat ${{ env.VER_JSON_PATH }}
 
       - name: Install dpbench
-        run: conda install ${{ env.PACKAGE_NAME }}=${{ env.PACKAGE_VERSION }} pytest intel::intel-opencl-rt python=${{ matrix.python }} -c ${{ env.CHANNEL_PATH }}
+        run: conda install ${{ env.PACKAGE_NAME }}=${{ env.PACKAGE_VERSION }} pytest intel-opencl-rt python=${{ matrix.python }} -c ${{ env.CHANNEL_PATH }}
 
       - name: Setup OpenCL CPU device
         if: runner.os == 'Windows'
